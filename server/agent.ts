@@ -1,7 +1,7 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { Task, Subtask, FileNode, Message } from "../src/types.js";
 import { saveTask, saveFile, addMessage, getTasks, getFiles } from "./db.js";
-import { redisSet, redisGet } from "./redis.js";
+import { cacheSet, cacheGet } from "./cache.js";
 import { executeGitPush } from "./github.js";
 import { AppEnv, resolveEnvWithOverrides } from "./env.js";
 

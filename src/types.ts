@@ -46,10 +46,8 @@ export interface FileNode {
 }
 
 export interface DatabaseStatus {
-  postgres: 'connected' | 'local_fallback' | 'error';
-  redis: 'connected' | 'local_fallback' | 'error';
-  postgresUrl?: string;
-  redisUrl?: string;
+  d1: 'connected' | 'local_fallback' | 'error';
+  kv: 'connected' | 'local_fallback' | 'error';
 }
 
 export interface AgentSession {

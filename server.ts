@@ -7,7 +7,7 @@ import dotenv from "dotenv";
 dotenv.config();
 
 import { initDb, getMessages, addMessage, clearMessages, getTasks, deleteTasks, getFiles, clearFiles, saveFile } from "./server/db.js";
-import { initRedis, redisFlush } from "./server/redis.js";
+import { initCache, cacheFlush } from "./server/cache.js";
 import { planBuildTasks, executeAgentBuild, sseClients, broadcastSSE, cancelActiveBuild } from "./server/agent.js";
 import { getGithubConfig, saveGithubConfig, executeGitPush } from "./server/github.js";
 import { setRuntimeOverrides, resolveEnvWithOverrides } from "./server/env.js";
@@ -15,8 +15,9 @@ import { DatabaseStatus, Message, FileNode } from "./src/types.js";
 
 // This Express server is the local development entry (`pnpm dev`/`pnpm start`).
 // Production runs as a Cloudflare Worker via server/worker.ts instead — both
-// share the same db/redis/github/agent modules, threaded with an explicit
-// env object in Workers and process.env here.
+// share the same db/cache/github/agent modules, threaded with an explicit
+// env object in Workers and process.env here. D1/KV bindings only exist in
+// the Workers runtime, so local dev always runs on the in-memory fallback.
 
 const app = express();
 const PORT = 3000;
@@ -25,17 +26,15 @@ app.use(express.json());
 
 // Server-side state of our DBs
 let dbStatus: DatabaseStatus = {
-  postgres: "local_fallback",
-  redis: "local_fallback"
+  d1: "local_fallback",
+  kv: "local_fallback"
 };
 
 // API: Database and cache statuses
 app.get("/api/db-status", (req, res) => {
   res.json({
-    postgres: dbStatus.postgres,
-    redis: dbStatus.redis,
-    postgresUrl: dbStatus.postgresUrl ? maskConnectionString(dbStatus.postgresUrl) : undefined,
-    redisUrl: dbStatus.redisUrl ? maskConnectionString(dbStatus.redisUrl) : undefined,
+    d1: dbStatus.d1,
+    kv: dbStatus.kv,
   });
 });
 
@@ -117,7 +116,7 @@ app.post("/api/session/clear", async (req, res) => {
     await clearMessages();
     await deleteTasks();
     await clearFiles();
-    await redisFlush();
+    await cacheFlush();
     broadcastSSE("session-cleared", {});
     res.json({ status: "success", message: "Conversation logs, task registry, files, and cache successfully purged." });
   } catch (err: any) {
@@ -134,7 +133,7 @@ app.post("/api/session/load", async (req, res) => {
     await clearMessages();
     await deleteTasks();
     await clearFiles();
-    await redisFlush();
+    await cacheFlush();
 
     // 2. Load messages (skip welcome-msg as clearMessages creates one if welcome-msg doesn't exist, wait, clearMessages inserts a welcome-msg if count is 0. Let's do it safely)
     if (newMsgs && Array.isArray(newMsgs)) {
@@ -239,38 +238,31 @@ app.post("/api/files/save", async (req, res) => {
   }
 });
 
-// API: Update settings & save to .env
+// API: Update settings (in-memory for this process only)
 app.post("/api/settings", async (req, res) => {
   try {
-    const { geminiApiKey, postgresUrl, redisUrl } = req.body;
+    const { geminiApiKey } = req.body;
 
     // Applied as in-memory overrides for this process only, matching the
     // Workers production entry (server/worker.ts) which has no writable
-    // disk/.env either. For durable local config, edit .env directly.
+    // disk/.env either. D1/KV are bindings fixed at deploy time and cannot
+    // be reconfigured at runtime — only Gemini's key can be overridden here.
     if (geminiApiKey) setRuntimeOverrides({ GEMINI_API_KEY: geminiApiKey });
-    if (postgresUrl !== undefined) setRuntimeOverrides({ DATABASE_URL: postgresUrl });
-    if (redisUrl !== undefined) {
-      console.warn("redisUrl setting is deprecated; set UPSTASH_REDIS_REST_URL/TOKEN instead.");
-    }
 
-    // Re-trigger DB/Redis initializations
-    const pStatus = await initDb();
-    const rStatus = await initRedis();
+    // Re-trigger DB/cache initializations
+    const dStatus = await initDb();
+    const cStatus = await initCache();
 
     dbStatus = {
-      postgres: pStatus.postgres,
-      redis: rStatus.status,
-      postgresUrl: pStatus.postgresUrl,
-      redisUrl: rStatus.url
+      d1: dStatus.d1,
+      kv: cStatus.status,
     };
 
     res.json({
       status: "success",
       dbStatus: {
-        postgres: dbStatus.postgres,
-        redis: dbStatus.redis,
-        postgresUrl: dbStatus.postgresUrl ? maskConnectionString(dbStatus.postgresUrl) : undefined,
-        redisUrl: dbStatus.redisUrl ? maskConnectionString(dbStatus.redisUrl) : undefined,
+        d1: dbStatus.d1,
+        kv: dbStatus.kv,
       }
     });
   } catch (err: any) {
@@ -349,31 +341,15 @@ app.get("/api/tasks/stream", (req, res) => {
   });
 });
 
-// Helper to mask connection credentials for user display safety
-function maskConnectionString(connStr: string): string {
-  try {
-    const url = new URL(connStr);
-    if (url.password) {
-      url.password = "••••••••";
-    }
-    return url.toString();
-  } catch (e) {
-    // Basic regex fallback if not standard URL
-    return connStr.replace(/:([^:@]+)@/, ":••••••••@");
-  }
-}
-
 async function startServer() {
-  // Initialize Database (SQLite/JSON or Postgres)
-  const pStatus = await initDb();
-  // Initialize Redis Cache (Memory map or Redis)
-  const rStatus = await initRedis();
+  // Initialize Database (in-memory locally; D1 in the deployed Worker)
+  const dStatus = await initDb();
+  // Initialize Cache (in-memory locally; Workers KV in the deployed Worker)
+  const cStatus = await initCache();
 
   dbStatus = {
-    postgres: pStatus.postgres,
-    redis: rStatus.status,
-    postgresUrl: pStatus.postgresUrl,
-    redisUrl: rStatus.url
+    d1: dStatus.d1,
+    kv: cStatus.status,
   };
 
   // Mount Vite middleware for development, serve index.html for production

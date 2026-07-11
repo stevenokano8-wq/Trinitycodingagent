@@ -9,7 +9,7 @@ import {
   initDb, getMessages, addMessage, clearMessages, getTasks, saveTask,
   deleteTasks, getFiles, clearFiles, saveFile,
 } from "./db.js";
-import { initRedis, redisFlush } from "./redis.js";
+import { initCache, cacheFlush } from "./cache.js";
 import { planBuildTasks, executeAgentBuild, sseClients, broadcastSSE, cancelActiveBuild } from "./agent.js";
 import { getGithubConfig, saveGithubConfig, executeGitPush } from "./github.js";
 import { AppEnv, setRuntimeOverrides, resolveEnvWithOverrides } from "./env.js";
@@ -21,39 +21,25 @@ const app = new Hono<{ Bindings: Bindings }>();
 
 app.use("*", cors());
 
-let dbStatus: DatabaseStatus = { postgres: "local_fallback", redis: "local_fallback" };
+let dbStatus: DatabaseStatus = { d1: "local_fallback", kv: "local_fallback" };
 let initialized = false;
 
 async function ensureInit(env: Bindings) {
   if (initialized) return;
-  const pStatus = await initDb(env);
-  const rStatus = await initRedis(env);
+  const dStatus = await initDb(env);
+  const cStatus = await initCache(env);
   dbStatus = {
-    postgres: pStatus.postgres,
-    redis: rStatus.status,
-    postgresUrl: pStatus.postgresUrl,
-    redisUrl: rStatus.url,
+    d1: dStatus.d1,
+    kv: cStatus.status,
   };
   initialized = true;
-}
-
-function maskConnectionString(connStr: string): string {
-  try {
-    const url = new URL(connStr);
-    if (url.password) url.password = "••••••••";
-    return url.toString();
-  } catch {
-    return connStr.replace(/:([^:@]+)@/, ":••••••••@");
-  }
 }
 
 app.get("/api/db-status", async (c) => {
   await ensureInit(c.env);
   return c.json({
-    postgres: dbStatus.postgres,
-    redis: dbStatus.redis,
-    postgresUrl: dbStatus.postgresUrl ? maskConnectionString(dbStatus.postgresUrl) : undefined,
-    redisUrl: dbStatus.redisUrl ? maskConnectionString(dbStatus.redisUrl) : undefined,
+    d1: dbStatus.d1,
+    kv: dbStatus.kv,
   });
 });
 
@@ -114,7 +100,7 @@ app.post("/api/session/clear", async (c) => {
     await clearMessages();
     await deleteTasks();
     await clearFiles();
-    await redisFlush();
+    await cacheFlush();
     broadcastSSE("session-cleared", {});
     return c.json({ status: "success", message: "Conversation logs, task registry, files, and cache successfully purged." });
   } catch (err: any) {
@@ -130,7 +116,7 @@ app.post("/api/session/load", async (c) => {
     await clearMessages();
     await deleteTasks();
     await clearFiles();
-    await redisFlush();
+    await cacheFlush();
 
     if (newMsgs && Array.isArray(newMsgs)) {
       const actualMsgs = newMsgs.filter((m: any) => m.id !== "welcome-msg");
@@ -212,19 +198,14 @@ app.post("/api/files/save", async (c) => {
 
 app.post("/api/settings", async (c) => {
   try {
-    const { geminiApiKey, postgresUrl, redisUrl } = await c.req.json();
+    const { geminiApiKey } = await c.req.json();
 
     // No writable disk in Workers: settings changes are applied as in-memory
-    // overrides for this session only (see server/env.ts). For durable
-    // config, set the corresponding Worker secret/binding instead.
+    // overrides for this session only (see server/env.ts). D1/KV are
+    // bindings fixed at deploy time (wrangler.api.toml) and cannot be
+    // reconfigured at runtime — only Gemini's key can be overridden here.
     const patch: Partial<AppEnv> = {};
     if (geminiApiKey) patch.GEMINI_API_KEY = geminiApiKey;
-    if (postgresUrl !== undefined) patch.DATABASE_URL = postgresUrl;
-    if (redisUrl !== undefined) {
-      // Legacy field kept for API compatibility; Upstash needs URL+token, so
-      // this alone can't fully reconfigure Redis at runtime.
-      console.warn("redisUrl setting is deprecated; configure UPSTASH_REDIS_REST_URL/TOKEN as Worker secrets instead.");
-    }
     setRuntimeOverrides(patch);
 
     initialized = false;
@@ -233,10 +214,8 @@ app.post("/api/settings", async (c) => {
     return c.json({
       status: "success",
       dbStatus: {
-        postgres: dbStatus.postgres,
-        redis: dbStatus.redis,
-        postgresUrl: dbStatus.postgresUrl ? maskConnectionString(dbStatus.postgresUrl) : undefined,
-        redisUrl: dbStatus.redisUrl ? maskConnectionString(dbStatus.redisUrl) : undefined,
+        d1: dbStatus.d1,
+        kv: dbStatus.kv,
       },
     });
   } catch (err: any) {

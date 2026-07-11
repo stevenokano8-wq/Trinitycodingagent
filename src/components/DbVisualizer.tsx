@@ -10,7 +10,7 @@ interface DbVisualizerProps {
 }
 
 export default function DbVisualizer({ messages, tasks, files, onPurge }: DbVisualizerProps) {
-  const [activeTab, setActiveTab] = useState<"sql_tables" | "redis_keys" | "logs">("sql_tables");
+  const [activeTab, setActiveTab] = useState<"sql_tables" | "kv_keys" | "logs">("sql_tables");
   const [isRefreshing, setIsRefreshing] = useState(false);
 
   const handleRefresh = () => {
@@ -28,7 +28,7 @@ export default function DbVisualizer({ messages, tasks, files, onPurge }: DbVisu
           </div>
           <div>
             <h3 className="font-bold text-sm text-gray-900 font-display">Sovereign DB Visualizer</h3>
-            <p className="text-[10px] text-gray-500 font-mono">Durable PostgreSQL & Redis Active Node Console</p>
+            <p className="text-[10px] text-gray-500 font-mono">Durable Cloudflare D1 & Workers KV Active Node Console</p>
           </div>
         </div>
 
@@ -59,8 +59,8 @@ export default function DbVisualizer({ messages, tasks, files, onPurge }: DbVisu
       {/* Tabs */}
       <div className="flex border-b border-gray-100 px-4 bg-gray-50/50">
         {[
-          { id: "sql_tables", name: "Postgres Tables (Relational SQL)" },
-          { id: "redis_keys", name: "Redis Key-Value Cache" },
+          { id: "sql_tables", name: "D1 Tables (Relational SQL)" },
+          { id: "kv_keys", name: "Workers KV Key-Value Cache" },
           { id: "logs", name: "System Log Output" }
         ].map(tab => (
           <button
@@ -165,19 +165,19 @@ export default function DbVisualizer({ messages, tasks, files, onPurge }: DbVisu
               </div>
             </div>
           </div>
-        ) : activeTab === "redis_keys" ? (
+        ) : activeTab === "kv_keys" ? (
           <div className="space-y-4">
             <div className="p-4 bg-amber-50/40 border border-amber-200/60 rounded-2xl flex items-start gap-3 text-amber-800 text-xs leading-relaxed">
               <Cpu className="h-4.5 w-4.5 text-amber-500 shrink-0 mt-0.5" />
               <div>
-                <strong>Active Redis Cluster Monitoring:</strong> Key-value memory entries are used for fast state caching, active session checks, rate throttling, and temporary execution statuses before syncing back to the primary SQL relational persistent nodes.
+                <strong>Active Workers KV Monitoring:</strong> Key-value cache entries are used for fast state caching, active session checks, rate throttling, and temporary execution statuses before syncing back to the primary D1 relational persistent nodes.
               </div>
             </div>
 
             <div className="border border-gray-150 rounded-2xl overflow-hidden shadow-xs">
               <div className="bg-gray-50 px-4 py-2.5 border-b border-gray-150 flex items-center justify-between text-xs font-bold text-gray-700 font-mono">
-                <span>REDIS ACTIVE KEYS</span>
-                <span className="text-[10px] text-gray-400 font-normal">Active Memory Cache Node</span>
+                <span>WORKERS KV ACTIVE KEYS</span>
+                <span className="text-[10px] text-gray-400 font-normal">Active Cache Node</span>
               </div>
               <div className="divide-y divide-gray-100 text-xs font-mono">
                 {[
@@ -185,7 +185,7 @@ export default function DbVisualizer({ messages, tasks, files, onPurge }: DbVisu
                   { key: "cache:tasks:total", val: String(tasks.length), ttl: "3600s", type: "INTEGER" },
                   { key: "cache:files:count", val: String(files.length), ttl: "3600s", type: "INTEGER" },
                   { key: "rate_limiter:hits:trinity", val: "4", ttl: "58s", type: "STRING" },
-                  { key: "status:postgres_node", val: "online_durable", ttl: "PERSISTENT", type: "STRING" }
+                  { key: "status:d1_node", val: "online_durable", ttl: "PERSISTENT", type: "STRING" }
                 ].map(item => (
                   <div key={item.key} className="p-3.5 flex items-center justify-between hover:bg-gray-50/50">
                     <div className="flex items-center gap-2.5">
@@ -214,9 +214,9 @@ export default function DbVisualizer({ messages, tasks, files, onPurge }: DbVisu
             </div>
             <div>[00:01:04] Booting Sovereign Core container service...</div>
             <div className="text-emerald-400">[00:01:05] DATABASE CONNECTION: Toggling initDb SQL routine.</div>
-            <div className="text-sky-400">[00:01:05] SQLite File Node successfully active: "workspace_db.json"</div>
+            <div className="text-sky-400">[00:01:05] D1 binding check: falling back to in-memory store in local dev.</div>
             <div>[00:01:06] Server running on port 3000 in DEV mode.</div>
-            <div className="text-indigo-400">[00:01:07] Redis client: Initializing local fallback Memory Map.</div>
+            <div className="text-indigo-400">[00:01:07] KV client: Initializing local fallback Memory Map.</div>
             <div>[00:01:07] Vite Middleware bound for live hot reloading.</div>
             <div className="text-amber-500">[00:02:14] Gemini API Client successfully bound to "gemini-3.5-flash".</div>
             {tasks.length > 0 && (

@@ -9,8 +9,6 @@ interface SettingsModalProps {
 }
 
 export default function SettingsModal({ onClose, dbStatus, onRefresh }: SettingsModalProps) {
-  const [postgresUrl, setPostgresUrl] = useState("");
-  const [redisUrl, setRedisUrl] = useState("");
   const [geminiApiKey, setGeminiApiKey] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [saveResult, setSaveResult] = useState<{ status: "success" | "error"; message: string } | null>(null);
@@ -30,8 +28,6 @@ export default function SettingsModal({ onClose, dbStatus, onRefresh }: Settings
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          postgresUrl: postgresUrl || undefined,
-          redisUrl: redisUrl || undefined,
           geminiApiKey: geminiApiKey || undefined,
         }),
       });
@@ -41,8 +37,6 @@ export default function SettingsModal({ onClose, dbStatus, onRefresh }: Settings
         setSaveResult({ status: "success", message: "Environment credentials saved and reconnected successfully!" });
         onRefresh();
         // Clear inputs after success
-        setPostgresUrl("");
-        setRedisUrl("");
         setGeminiApiKey("");
       } else {
         setSaveResult({ status: "error", message: data.error || "Failed to update connection secrets." });
@@ -85,7 +79,7 @@ export default function SettingsModal({ onClose, dbStatus, onRefresh }: Settings
             </div>
             <div>
               <h3 className="font-bold text-gray-900 font-display text-lg">Infrastructure Settings</h3>
-              <p className="text-xs text-gray-500">Configure PostgreSQL, Redis, & Gemini Credentials</p>
+              <p className="text-xs text-gray-500">Cloudflare D1, Workers KV, & Gemini Credentials</p>
             </div>
           </div>
           <button 
@@ -106,53 +100,27 @@ export default function SettingsModal({ onClose, dbStatus, onRefresh }: Settings
             <div className="flex items-center justify-between py-1.5 border-b border-gray-100/60">
               <span className="text-sm font-semibold text-gray-700 flex items-center gap-2">
                 <Database className="h-4 w-4 text-indigo-500" />
-                PostgreSQL SQL Store
+                Cloudflare D1 (SQL)
               </span>
-              {statusBadge(dbStatus.postgres)}
+              {statusBadge(dbStatus.d1)}
             </div>
 
             <div className="flex items-center justify-between py-1.5">
               <span className="text-sm font-semibold text-gray-700 flex items-center gap-2">
                 <ShieldCheck className="h-4 w-4 text-red-500" />
-                Redis Cache Hub
+                Workers KV Cache
               </span>
-              {statusBadge(dbStatus.redis)}
+              {statusBadge(dbStatus.kv)}
             </div>
           </div>
 
+          <p className="text-[10px] text-gray-400 -mt-2">
+            D1 and KV are native Cloudflare bindings configured at deploy time in wrangler.api.toml —
+            there's no connection string to paste here. Only the Gemini key can be overridden below.
+          </p>
+
           {/* Form */}
           <form onSubmit={handleSave} className="space-y-4">
-            <div>
-              <label className="block text-xs font-bold text-gray-600 uppercase mb-1.5 flex items-center gap-1.5 font-mono">
-                <Key className="h-3.5 w-3.5 text-gray-400" /> PostgreSQL Connection String
-              </label>
-              <input
-                id="input-postgres-url"
-                type="password"
-                placeholder="postgresql://user:pass@host:5432/database"
-                value={postgresUrl}
-                onChange={(e) => setPostgresUrl(e.target.value)}
-                className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 text-sm focus:bg-white focus:outline-none focus:ring-2 focus:ring-gray-900 transition-all font-mono"
-              />
-              <p className="text-[10px] text-gray-400 mt-1">
-                Sovereign Agent connects securely using SSL mode. Empty leaves Sandbox mode active.
-              </p>
-            </div>
-
-            <div>
-              <label className="block text-xs font-bold text-gray-600 uppercase mb-1.5 flex items-center gap-1.5 font-mono">
-                <ShieldCheck className="h-3.5 w-3.5 text-gray-400" /> Redis Cache URL
-              </label>
-              <input
-                id="input-redis-url"
-                type="password"
-                placeholder="redis://:password@host:port"
-                value={redisUrl}
-                onChange={(e) => setRedisUrl(e.target.value)}
-                className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 text-sm focus:bg-white focus:outline-none focus:ring-2 focus:ring-gray-900 transition-all font-mono"
-              />
-            </div>
-
             <div>
               <label className="block text-xs font-bold text-gray-600 uppercase mb-1.5 flex items-center gap-1.5 font-mono">
                 <Cpu className="h-3.5 w-3.5 text-gray-400" /> Gemini API Key

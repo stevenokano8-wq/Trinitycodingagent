@@ -8,8 +8,6 @@ interface SettingsViewProps {
 }
 
 export default function SettingsView({ dbStatus, onRefresh }: SettingsViewProps) {
-  const [pgUrl, setPgUrl] = useState(dbStatus.postgresUrl || "postgresql://postgres:trinity_db_pass@127.0.0.1:5432/sovereign");
-  const [redisUrl, setRedisUrl] = useState(dbStatus.redisUrl || "redis://127.0.0.1:6379");
   const [geminiKey, setGeminiKey] = useState("••••••••••••••••••••••••••••");
   const [isTesting, setIsTesting] = useState(false);
   const [testResult, setTestResult] = useState<string | null>(null);
@@ -21,7 +19,7 @@ export default function SettingsView({ dbStatus, onRefresh }: SettingsViewProps)
 
     setTimeout(() => {
       setIsTesting(false);
-      setTestResult("PostgreSQL, Redis and Gemini AI client handshakes successfully authenticated! Latency: 12ms.");
+      setTestResult("Cloudflare D1, Workers KV and Gemini AI client handshakes successfully authenticated! Latency: 12ms.");
       onRefresh();
     }, 1200);
   };
@@ -37,7 +35,7 @@ export default function SettingsView({ dbStatus, onRefresh }: SettingsViewProps)
           </div>
           <div className="space-y-1">
             <h2 className="text-xl font-bold text-gray-900 font-display">Workspace Infrastructure Configurations</h2>
-            <p className="text-xs text-gray-500 font-mono">Bind API credentials, PostgreSQL storage strings, and Redis pool buffers securely.</p>
+            <p className="text-xs text-gray-500 font-mono">Bind API credentials; Cloudflare D1 and Workers KV are wired via wrangler.api.toml bindings.</p>
           </div>
         </div>
       </div>
@@ -78,31 +76,31 @@ export default function SettingsView({ dbStatus, onRefresh }: SettingsViewProps)
                 </p>
               </div>
 
-              {/* Postgres Connection String */}
+              {/* D1 binding info */}
               <div>
                 <label className="block text-[11px] font-bold text-gray-400 font-mono uppercase mb-1.5 flex items-center gap-1.5">
-                  <Database className="h-3.5 w-3.5 text-indigo-500" /> POSTGRESQL_CONNECTION_URL
+                  <Database className="h-3.5 w-3.5 text-indigo-500" /> D1_DATABASE_BINDING
                 </label>
                 <input
                   id="input-settings-pg"
                   type="text"
-                  value={pgUrl}
-                  onChange={(e) => setPgUrl(e.target.value)}
-                  className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-3 text-xs text-gray-700 font-mono focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                  readOnly
+                  value="DB → sovereign-agent-db (wrangler.api.toml)"
+                  className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-3 text-xs text-gray-500 font-mono cursor-not-allowed"
                 />
               </div>
 
-              {/* Redis Connection String */}
+              {/* KV binding info */}
               <div>
                 <label className="block text-[11px] font-bold text-gray-400 font-mono uppercase mb-1.5 flex items-center gap-1.5">
-                  <Cpu className="h-3.5 w-3.5 text-emerald-500" /> REDIS_CONNECTION_URL
+                  <Cpu className="h-3.5 w-3.5 text-emerald-500" /> KV_NAMESPACE_BINDING
                 </label>
                 <input
                   id="input-settings-redis"
                   type="text"
-                  value={redisUrl}
-                  onChange={(e) => setRedisUrl(e.target.value)}
-                  className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-3 text-xs text-gray-700 font-mono focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                  readOnly
+                  value="CACHE_KV → sovereign-agent-cache (wrangler.api.toml)"
+                  className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-3 text-xs text-gray-500 font-mono cursor-not-allowed"
                 />
               </div>
 
@@ -130,15 +128,15 @@ export default function SettingsView({ dbStatus, onRefresh }: SettingsViewProps)
             
             <div className="space-y-3 font-mono text-xs">
               <div className="flex justify-between items-center p-3 rounded-xl bg-gray-50 border border-gray-100">
-                <span className="text-gray-500">PostgreSQL</span>
-                <span className={`px-2 py-0.5 rounded font-mono font-bold ${dbStatus.postgres === "connected" ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>
-                  {dbStatus.postgres}
+                <span className="text-gray-500">Cloudflare D1</span>
+                <span className={`px-2 py-0.5 rounded font-mono font-bold ${dbStatus.d1 === "connected" ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>
+                  {dbStatus.d1}
                 </span>
               </div>
               <div className="flex justify-between items-center p-3 rounded-xl bg-gray-50 border border-gray-100">
-                <span className="text-gray-500">Redis Cache</span>
-                <span className={`px-2 py-0.5 rounded font-mono font-bold ${dbStatus.redis === "connected" ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>
-                  {dbStatus.redis}
+                <span className="text-gray-500">Workers KV Cache</span>
+                <span className={`px-2 py-0.5 rounded font-mono font-bold ${dbStatus.kv === "connected" ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>
+                  {dbStatus.kv}
                 </span>
               </div>
             </div>

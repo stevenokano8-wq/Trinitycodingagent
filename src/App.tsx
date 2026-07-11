@@ -242,7 +242,7 @@ export default function App() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [files, setFiles] = useState<FileNode[]>([]);
-  const [dbStatus, setDbStatus] = useState<DatabaseStatus>({ postgres: "local_fallback", redis: "local_fallback" });
+  const [dbStatus, setDbStatus] = useState<DatabaseStatus>({ d1: "local_fallback", kv: "local_fallback" });
   const [inputText, setInputText] = useState("");
   const [isSending, setIsSending] = useState(false);
   const [currentPrompt, setCurrentPrompt] = useState("");
@@ -423,7 +423,7 @@ export default function App() {
       // 1. Fetch DB Statuses
       const statusRes = await fetch("/api/db-status");
       const statusData = await statusRes.json();
-      setDbStatus({ postgres: statusData.postgres, redis: statusData.redis });
+      setDbStatus({ d1: statusData.d1, kv: statusData.kv });
 
       // 2. Fetch Chat History
       const msgRes = await fetch("/api/messages");
@@ -1406,8 +1406,8 @@ export default function App() {
               </div>
               <div className="space-y-1.5 flex-1 overflow-y-auto">
                 <div>[SYSTEM] Container spin-up active. Port 3000 mapped.</div>
-                <div>[SYSTEM] PostgreSQL relational status: {dbStatus.postgres}</div>
-                <div>[SYSTEM] Redis caching pool status: {dbStatus.redis}</div>
+                <div>[SYSTEM] Cloudflare D1 relational status: {dbStatus.d1}</div>
+                <div>[SYSTEM] Cloudflare KV caching pool status: {dbStatus.kv}</div>
                 <div>[HTTP] Listening for SSE handshakes at /api/tasks/stream</div>
                 {files.map(f => (
                   <div key={f.path} className="text-emerald-400">[FILESYSTEM] Synced synthesized artifact: {f.path}</div>
@@ -1662,15 +1662,15 @@ export default function App() {
                   <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wider font-mono">Connections</h4>
                   <div className="space-y-2">
                     <div className="flex items-center justify-between text-xs font-medium text-gray-600 p-2 border-b border-gray-50">
-                      <span>PostgreSQL</span>
-                      <span className={`px-2 py-0.5 rounded font-mono font-bold ${dbStatus.postgres === "connected" ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>
-                        {dbStatus.postgres}
+                      <span>Cloudflare D1</span>
+                      <span className={`px-2 py-0.5 rounded font-mono font-bold ${dbStatus.d1 === "connected" ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>
+                        {dbStatus.d1}
                       </span>
                     </div>
                     <div className="flex items-center justify-between text-xs font-medium text-gray-600 p-2">
-                      <span>Redis Cache</span>
-                      <span className={`px-2 py-0.5 rounded font-mono font-bold ${dbStatus.redis === "connected" ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>
-                        {dbStatus.redis}
+                      <span>Workers KV Cache</span>
+                      <span className={`px-2 py-0.5 rounded font-mono font-bold ${dbStatus.kv === "connected" ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>
+                        {dbStatus.kv}
                       </span>
                     </div>
                   </div>

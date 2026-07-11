@@ -1,3 +1,4 @@
+import { API_BASE } from "../lib/api.ts";
 import React, { useState, useEffect } from "react";
 import { DatabaseStatus } from "../types.js";
 import { Database, ShieldCheck, Cpu, Key, CheckCircle, RefreshCw, AlertCircle } from "lucide-react";
@@ -24,7 +25,7 @@ export default function SettingsModal({ onClose, dbStatus, onRefresh }: Settings
     setSaveResult(null);
 
     try {
-      const response = await fetch("/api/settings", {
+      const response = await fetch(`${API_BASE}/api/settings`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

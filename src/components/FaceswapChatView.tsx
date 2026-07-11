@@ -455,16 +455,17 @@ export default function FaceswapChatView({
                 <a 
                   href={targetImage || "https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?auto=format&fit=crop&w=400&h=400&q=80"} 
                   download="faceswap_result.png"
-                  className="p-1 text-slate-500 hover:text-indigo-600 hover:bg-slate-50 rounded-lg transition-colors"
+                  className="p-1 text-slate-500 hover:text-indigo-600 hover:bg-slate-50 rounded-lg transition-colors flex items-center gap-1 text-[10px] font-mono font-bold"
                   title="Download Result Image"
                 >
-                  <Download className="h-4 w-4" />
+                  <Download className="h-3.5 w-3.5" />
+                  <span>SAVE</span>
                 </a>
               </div>
             </div>
 
             {/* Visual Double-Box and Output Display */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-center">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-center mb-5">
               
               {/* Source miniature */}
               <div className="flex flex-col items-center justify-center p-3 border border-gray-150 rounded-xl bg-white/65">
@@ -496,8 +497,20 @@ export default function FaceswapChatView({
 
             </div>
 
+            {/* Prominent Download Button */}
+            <div className="flex justify-center pb-3 border-b border-gray-100 mb-3">
+              <a
+                href={targetImage || "https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?auto=format&fit=crop&w=400&h=400&q=80"}
+                download="faceswap_result.png"
+                className="inline-flex items-center gap-2 px-6 py-2.5 bg-zinc-950 hover:bg-zinc-800 text-white rounded-xl text-xs font-bold transition-all shadow-sm hover:shadow-md cursor-pointer select-none"
+              >
+                <Download className="h-3.5 w-3.5" />
+                Download Result
+              </a>
+            </div>
+
             {/* Bottom stats summary */}
-            <div className="mt-4 pt-3 border-t border-gray-100 flex justify-between items-center text-[10px] text-gray-500 font-mono">
+            <div className="pt-1 flex justify-between items-center text-[10px] text-gray-500 font-mono">
               <span>Matching Core: <span className="font-bold text-indigo-600">Poisson Synth Alpha</span></span>
               <span>Blend Level: <span className="font-bold text-slate-800">89%</span></span>
             </div>

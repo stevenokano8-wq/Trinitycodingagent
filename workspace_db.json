@@ -1,41 +1,5 @@
 {
-  "messages": [
-    {
-      "id": "msg-1783742709524-user",
-      "role": "user",
-      "content": "Create a folder ",
-      "timestamp": "2026-07-11T04:05:09.524Z"
-    }
-  ],
-  "tasks": [
-    {
-      "id": "task-1783742721211-0",
-      "name": "Execute folder creation",
-      "status": "pending",
-      "progress": 0,
-      "activeSubtaskIndex": 0,
-      "createdAt": "2026-07-11T04:05:21.211Z",
-      "subtasks": [
-        {
-          "id": "task-1783742721211-0-sub-0",
-          "taskId": "task-1783742721211-0",
-          "name": "Create target directory",
-          "status": "pending",
-          "logs": [
-            "Initialized subtask. Waiting for agent process allocation..."
-          ]
-        },
-        {
-          "id": "task-1783742721211-0-sub-1",
-          "taskId": "task-1783742721211-0",
-          "name": "Verify directory existence",
-          "status": "pending",
-          "logs": [
-            "Initialized subtask. Waiting for agent process allocation..."
-          ]
-        }
-      ]
-    }
-  ],
+  "messages": [],
+  "tasks": [],
   "files": []
 }

@@ -11,3 +11,9 @@ directory = "./dist"
 binding = "ASSETS"
 not_found_handling = "single-page-application"
 run_worker_first = false
+
+# Custom domain for the production frontend. Cloudflare issues/manages the
+# certificate automatically once the zone (trinityuniverse.org) is active.
+[[routes]]
+pattern = "agent.trinityuniverse.org"
+custom_domain = true

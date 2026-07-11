@@ -220,7 +220,7 @@ const PERSONAS = [
   },
   {
     id: "db",
-    name: "Postgres DB-Oracle",
+    name: "D1 SQL-Oracle",
     icon: Database,
     badgeColor: "bg-emerald-600 hover:bg-emerald-500",
     avatarBg: "bg-emerald-600",

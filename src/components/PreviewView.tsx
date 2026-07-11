@@ -396,8 +396,8 @@ function DynamicSovereignWorkspace({
                 <div className="flex items-center gap-2.5">
                   <Database className="h-4.5 w-4.5 text-emerald-600" />
                   <div>
-                    <span className="text-[11px] font-bold text-emerald-800 font-sans block">PostgreSQL Schema Engaged</span>
-                    <span className="text-[9px] text-emerald-600 font-mono">Status: Connected to cluster</span>
+                    <span className="text-[11px] font-bold text-emerald-800 font-sans block">Cloudflare D1 SQL Engaged</span>
+                    <span className="text-[9px] text-emerald-600 font-mono">Status: Connected to edge D1 database</span>
                   </div>
                 </div>
                 <span className="text-[9px] font-bold bg-emerald-200 text-emerald-800 px-2 py-0.5 rounded font-mono">LIVE</span>
@@ -465,7 +465,7 @@ function DynamicSovereignWorkspace({
 
 function TodoSimulator() {
   const [todos, setTodos] = useState([
-    { id: 1, text: "Establish backend PostgreSQL cluster and schemas", completed: true },
+    { id: 1, text: "Establish backend Cloudflare D1 tables and schemas", completed: true },
     { id: 2, text: "Build real-time websocket task status stream pipeline", completed: true },
     { id: 3, text: "Style interface layout with Swiss typography matches", completed: false },
     { id: 4, text: "Complete end-to-end telemetry and deployment check", completed: false }
@@ -583,7 +583,7 @@ function CalculatorSimulator() {
 function NotesSimulator() {
   const [notes, setNotes] = useState([
     { id: 1, title: "Trinity Build Spec", text: "Ensure full compliance with Swiss minimal design paradigms and zero-bloat mandates." },
-    { id: 2, title: "PostgreSQL Config Notes", text: "Durable database utilizes standard pg clients with SSL active to shield communication tunnels." }
+    { id: 2, title: "Cloudflare D1 & KV Config Notes", text: "Durable edge database utilizes native Serverless D1 queries and KV cache, avoiding heavy TCP socket blockages." }
   ]);
   const [activeId, setActiveId] = useState<number | null>(1);
   const [title, setTitle] = useState("Trinity Build Spec");
@@ -669,7 +669,7 @@ function GenericSimulator({ currentPrompt }: { currentPrompt: string }) {
           <div className="text-emerald-400">✓ production bundle generated in 1.4s</div>
           <div>$ node dist/server.cjs</div>
           <div className="text-amber-500">Listening on http://0.0.0.0:3001</div>
-          <div className="text-sky-400">[HMR] Dev servers synchronized with PostgreSQL client</div>
+          <div className="text-sky-400">[HMR] Dev servers synchronized with Cloudflare D1 database and KV cache</div>
         </div>
       </div>
     </div>

@@ -48,7 +48,7 @@ export default function GithubView() {
   // Commit History
   const [commits, setCommits] = useState<CommitLog[]>([
     { sha: "b85f2a1", message: "CEO hot-sync: refine workspace dialogue prompt triggers", branch: "main", author: "Trinity CEO", time: "5 mins ago" },
-    { sha: "62d91a0", message: "Synthesize real-time database connection checkers for PostgreSQL/Redis", branch: "main", author: "Trinity CEO", time: "2 hours ago" },
+    { sha: "62d91a0", message: "Synthesize real-time database connection checkers for Cloudflare D1/KV", branch: "main", author: "Trinity CEO", time: "2 hours ago" },
     { sha: "efc882a", message: "Initialize Trinity Universe build cluster setup", branch: "main", author: "Trinity CEO", time: "1 day ago" }
   ]);
 

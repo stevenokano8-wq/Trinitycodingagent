@@ -130,7 +130,7 @@ export async function planBuildTasks(userPrompt: string, env?: Partial<AppEnv>):
         activeSubtaskIndex: 0,
         createdAt: new Date().toISOString(),
         subtasks: [
-          { id: `${taskId1}-sub-0`, taskId: taskId1, name: "Plan relational tables and Redis cache schema", status: "pending", logs: ["Waiting..."] },
+          { id: `${taskId1}-sub-0`, taskId: taskId1, name: "Plan Cloudflare D1 database and KV cache schema", status: "pending", logs: ["Waiting..."] },
           { id: `${taskId1}-sub-1`, taskId: taskId1, name: "Initialize server boilerplate & setup API proxies", status: "pending", logs: ["Waiting..."] },
           { id: `${taskId1}-sub-2`, taskId: taskId1, name: "Establish layout and dark/light UI boundaries", status: "pending", logs: ["Waiting..."] }
         ]
@@ -145,7 +145,7 @@ export async function planBuildTasks(userPrompt: string, env?: Partial<AppEnv>):
         subtasks: [
           { id: `${taskId2}-sub-0`, taskId: taskId2, name: "Implement Express REST endpoints", status: "pending", logs: ["Waiting..."] },
           { id: `${taskId2}-sub-1`, taskId: taskId2, name: "Integrate database client queries with fail-safes", status: "pending", logs: ["Waiting..."] },
-          { id: `${taskId2}-sub-2`, taskId: taskId2, name: "Configure Redis caching logic for sessions", status: "pending", logs: ["Waiting..."] }
+          { id: `${taskId2}-sub-2`, taskId: taskId2, name: "Configure KV caching logic for sessions", status: "pending", logs: ["Waiting..."] }
         ]
       },
       {

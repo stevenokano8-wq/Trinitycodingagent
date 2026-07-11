@@ -375,25 +375,25 @@ export default function SubtasksSimulationView() {
       )
     },
     {
-      id: "postgres-tables",
+      id: "d1-tables",
       title: "SQL Tables Schema",
       command: "build analytics table in database schema and configure queries",
       icon: Database,
       color: "bg-emerald-500",
-      badge: "Drizzle / Postgres",
+      badge: "Drizzle / Cloudflare D1",
       tasks: [
         {
           name: "Analyze Database Schema Specs",
           subtasks: [
-            "Validate SQL syntax against PostgreSQL dialect engines",
+            "Validate SQL syntax against SQLite / D1 dialect engines",
             "Synthesize analytics schema parameters with indexes",
-            "Prepare automatic up/down schema migration scripts"
+            "Prepare automatic D1 migration schemas"
           ]
         },
         {
           name: "Execute Relational Table Migrations",
           subtasks: [
-            "Trigger background pg client transaction logs",
+            "Trigger serverless D1 client query transactions",
             "Register table references inside workspace ORM schemas",
             "Seed database tables with preliminary mock data logs"
           ]
@@ -408,21 +408,21 @@ export default function SubtasksSimulationView() {
       ],
       workspaceInjections: [
         { path: "src/generated/database", type: "folder" },
-        { path: "src/generated/database/schema_analytics.ts", type: "file", content: "// Postgres analytics table declarations" },
-        { path: "src/generated/database/queries.ts", type: "file", content: "// Postgres client query handlers" }
+        { path: "src/generated/database/schema_analytics.ts", type: "file", content: "// Cloudflare D1 analytics table declarations" },
+        { path: "src/generated/database/queries.ts", type: "file", content: "// Cloudflare D1 client query handlers" }
       ],
       mockAppContent: (
         <div className="p-5 bg-zinc-950 text-zinc-100 h-full flex flex-col font-mono text-xs">
           <div className="flex items-center justify-between border-b border-zinc-800 pb-2 mb-3">
             <span className="text-emerald-500 font-bold flex items-center gap-1.5">
               <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse"></span>
-              POSTGRESQL RELATIONAL CONSOLE
+              CLOUDFLARE D1 SQL CONSOLE
             </span>
-            <span className="text-[9px] text-zinc-500">DATABASE: connected</span>
+            <span className="text-[9px] text-zinc-500">DATABASE: Cloudflare D1 connected</span>
           </div>
 
           <div className="space-y-2 flex-1 overflow-y-auto pr-1">
-            <div className="text-zinc-400">postgres=# SELECT * FROM analytics LIMIT 3;</div>
+            <div className="text-zinc-400">d1=# SELECT * FROM analytics LIMIT 3;</div>
             <div className="bg-zinc-900 border border-zinc-800 p-2.5 rounded-lg text-[10px] space-y-1">
               <div className="border-b border-zinc-800 pb-1 text-zinc-500 flex justify-between font-bold">
                 <span>id</span>

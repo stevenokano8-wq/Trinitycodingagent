@@ -10,8 +10,8 @@ export default function NotificationsView() {
 
   const [alerts, setAlerts] = useState([
     { id: "alt-1", title: "Cloud Run auto-scaled container", msg: "Allocated 1 fresh container instance to absorb traffic", type: "info", time: "10 mins ago" },
-    { id: "alt-2", title: "PostgreSQL Database Backup Successfully Saved", msg: "Automated snapshot triggered by Trinity backup cron", type: "success", time: "1 hour ago" },
-    { id: "alt-3", title: "PostgreSQL database client connected", msg: "Ingress connection authenticated from server-side process", type: "success", time: "2 hours ago" },
+    { id: "alt-2", title: "Cloudflare D1 Database Backup Successfully Saved", msg: "Automated snapshot triggered by Trinity backup cron", type: "success", time: "1 hour ago" },
+    { id: "alt-3", title: "Cloudflare D1 database client connected", msg: "Ingress connection authenticated from server-side process", type: "success", time: "2 hours ago" },
     { id: "alt-4", title: "Rate limiting thresholds warning", msg: "Anomalous traffic spikes detected on client endpoints", type: "warn", time: "1 day ago" }
   ]);
 
@@ -19,7 +19,7 @@ export default function NotificationsView() {
   const [cronPrompt, setCronPrompt] = useState("Scan container logs and compile alerts");
   const [isScheduling, setIsScheduling] = useState(false);
   const [scheduledJobs, setScheduledJobs] = useState([
-    { id: "job-1", cron: "0 * * * *", prompt: "PostgreSQL backup scheduler", status: "active" }
+    { id: "job-1", cron: "0 * * * *", prompt: "Cloudflare D1 backup scheduler", status: "active" }
   ]);
 
   const triggerAlert = () => {

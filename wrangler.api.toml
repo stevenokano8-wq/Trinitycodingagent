@@ -1,0 +1,16 @@
+name = "sovereign-agent-api"
+main = "server/worker.ts"
+compatibility_date = "2026-07-11"
+compatibility_flags = ["nodejs_compat"]
+
+# Uncomment and set once a Postgres database is provisioned (e.g. Neon/Aiven)
+# and bound through Hyperdrive: `wrangler hyperdrive create sovereign-agent-db
+# --connection-string="postgres://..."`, then add the resulting id below.
+# [[hyperdrive]]
+# binding = "HYPERDRIVE"
+# id = "<hyperdrive-config-id>"
+
+# Secrets (GEMINI_API_KEY, GITHUB_TOKEN, GITHUB_REPO_URL,
+# UPSTASH_REDIS_REST_URL, UPSTASH_REDIS_REST_TOKEN, and DATABASE_URL if not
+# using Hyperdrive) are set via `wrangler secret put <NAME> --config wrangler.api.toml`
+# or the Cloudflare dashboard — never committed here.

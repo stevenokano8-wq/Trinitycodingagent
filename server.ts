@@ -1,6 +1,5 @@
 import express from "express";
 import path from "path";
-import fs from "fs";
 import { createServer as createViteServer } from "vite";
 import dotenv from "dotenv";
 
@@ -11,7 +10,13 @@ import { initDb, getMessages, addMessage, clearMessages, getTasks, deleteTasks, 
 import { initRedis, redisFlush } from "./server/redis.js";
 import { planBuildTasks, executeAgentBuild, sseClients, broadcastSSE, cancelActiveBuild } from "./server/agent.js";
 import { getGithubConfig, saveGithubConfig, executeGitPush } from "./server/github.js";
+import { setRuntimeOverrides, resolveEnvWithOverrides } from "./server/env.js";
 import { DatabaseStatus, Message, FileNode } from "./src/types.js";
+
+// This Express server is the local development entry (`pnpm dev`/`pnpm start`).
+// Production runs as a Cloudflare Worker via server/worker.ts instead — both
+// share the same db/redis/github/agent modules, threaded with an explicit
+// env object in Workers and process.env here.
 
 const app = express();
 const PORT = 3000;
@@ -78,6 +83,8 @@ app.post("/api/messages", async (req, res) => {
         }
 
         // Trigger background asynchronous compilation/synthesis worker
+        // (Node stays alive between requests, so no waitUntil is needed here —
+        // that's only required in the Workers entry, server/worker.ts)
         executeAgentBuild(content, plannedTasks);
 
         res.json({ message: userMsg, tasks: plannedTasks });
@@ -213,11 +220,13 @@ app.post("/api/files/save", async (req, res) => {
     await saveFile(fileNode);
     
     // Auto push on manual save if GitHub configured!
-    const gitToken = process.env.GITHUB_TOKEN;
-    const gitRepoUrl = process.env.GITHUB_REPO_URL;
+    const resolved = resolveEnvWithOverrides();
+    const gitToken = resolved.GITHUB_TOKEN;
+    const gitRepoUrl = resolved.GITHUB_REPO_URL;
     if (gitToken && gitRepoUrl) {
       // Run background push so the response doesn't hang
-      executeGitPush(gitToken, gitRepoUrl, "main")
+      getFiles()
+        .then((allFiles) => executeGitPush(gitToken, gitRepoUrl, "main", allFiles))
         .then((pRes) => {
           console.log(`Auto-push on manual save: ${pRes.success ? 'Success' : 'Failed: ' + pRes.message}`);
         })
@@ -235,31 +244,15 @@ app.post("/api/settings", async (req, res) => {
   try {
     const { geminiApiKey, postgresUrl, redisUrl } = req.body;
 
-    const envPath = path.join(process.cwd(), ".env");
-    let envContent = "";
-
-    if (fs.existsSync(envPath)) {
-      envContent = fs.readFileSync(envPath, "utf8");
+    // Applied as in-memory overrides for this process only, matching the
+    // Workers production entry (server/worker.ts) which has no writable
+    // disk/.env either. For durable local config, edit .env directly.
+    if (geminiApiKey) setRuntimeOverrides({ GEMINI_API_KEY: geminiApiKey });
+    if (postgresUrl !== undefined) setRuntimeOverrides({ DATABASE_URL: postgresUrl });
+    if (redisUrl !== undefined) {
+      console.warn("redisUrl setting is deprecated; set UPSTASH_REDIS_REST_URL/TOKEN instead.");
     }
 
-    const updateEnvVar = (key: string, val: string) => {
-      const regex = new RegExp(`^${key}=.*$`, "m");
-      if (regex.test(envContent)) {
-        envContent = envContent.replace(regex, `${key}="${val}"`);
-      } else {
-        envContent += `\n${key}="${val}"`;
-      }
-    };
-
-    if (geminiApiKey) updateEnvVar("GEMINI_API_KEY", geminiApiKey);
-    if (postgresUrl !== undefined) updateEnvVar("DATABASE_URL", postgresUrl);
-    if (redisUrl !== undefined) updateEnvVar("REDIS_URL", redisUrl);
-
-    fs.writeFileSync(envPath, envContent.trim() + "\n", "utf8");
-
-    // Re-initialize env
-    dotenv.config({ override: true });
-    
     // Re-trigger DB/Redis initializations
     const pStatus = await initDb();
     const rStatus = await initRedis();
@@ -288,7 +281,7 @@ app.post("/api/settings", async (req, res) => {
 // API: Get GitHub connection configuration
 app.get("/api/github/config", (req, res) => {
   try {
-    const config = getGithubConfig();
+    const config = getGithubConfig(process.env);
     res.json(config);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -312,8 +305,9 @@ app.post("/api/github/push", async (req, res) => {
     const { token, repoUrl, branch } = req.body;
     
     // Retrieve from saved configuration if not supplied in body
-    const currentToken = token || process.env.GITHUB_TOKEN;
-    const currentRepoUrl = repoUrl || process.env.GITHUB_REPO_URL;
+    const resolvedGh = resolveEnvWithOverrides();
+    const currentToken = token || resolvedGh.GITHUB_TOKEN;
+    const currentRepoUrl = repoUrl || resolvedGh.GITHUB_REPO_URL;
     
     if (!currentToken) {
       return res.status(400).json({ error: "GitHub API Token is required. Please configure it or pass it." });
@@ -322,7 +316,8 @@ app.post("/api/github/push", async (req, res) => {
       return res.status(400).json({ error: "GitHub Repository URL is required. Please configure it or pass it." });
     }
     
-    const result = await executeGitPush(currentToken, currentRepoUrl, branch || "main");
+    const allFiles = await getFiles();
+    const result = await executeGitPush(currentToken, currentRepoUrl, branch || "main", allFiles);
     res.json(result);
   } catch (err: any) {
     res.status(500).json({ error: err.message });

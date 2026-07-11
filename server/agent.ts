@@ -1,17 +1,20 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { Task, Subtask, FileNode, Message } from "../src/types.js";
-import { saveTask, saveFile, addMessage, getTasks } from "./db.js";
+import { saveTask, saveFile, addMessage, getTasks, getFiles } from "./db.js";
 import { redisSet, redisGet } from "./redis.js";
 import { executeGitPush } from "./github.js";
+import { AppEnv, resolveEnvWithOverrides } from "./env.js";
 
 let aiClient: GoogleGenAI | null = null;
+let aiClientKey: string | null = null;
 
-export function getGeminiClient(): GoogleGenAI {
-  if (!aiClient) {
-    const key = process.env.GEMINI_API_KEY;
-    if (!key) {
-      throw new Error("GEMINI_API_KEY environment variable is required. Please set it in the Settings panel.");
-    }
+export function getGeminiClient(env?: Partial<AppEnv>): GoogleGenAI {
+  const key = resolveEnvWithOverrides(env).GEMINI_API_KEY;
+  if (!key) {
+    throw new Error("GEMINI_API_KEY environment variable is required. Please set it in the Settings panel.");
+  }
+  // Rebuild the client if the key changed (e.g. a runtime override was applied).
+  if (!aiClient || aiClientKey !== key) {
     aiClient = new GoogleGenAI({
       apiKey: key,
       httpOptions: {
@@ -20,6 +23,7 @@ export function getGeminiClient(): GoogleGenAI {
         }
       }
     });
+    aiClientKey = key;
   }
   return aiClient;
 }
@@ -40,9 +44,9 @@ export function broadcastSSE(event: string, data: any) {
 }
 
 // Generates tasks and subtasks structure based on a user prompt
-export async function planBuildTasks(userPrompt: string): Promise<Task[]> {
+export async function planBuildTasks(userPrompt: string, env?: Partial<AppEnv>): Promise<Task[]> {
   try {
-    const ai = getGeminiClient();
+    const ai = getGeminiClient(env);
     console.log("Planning build tasks using Gemini...");
 
     const response = await ai.models.generateContent({
@@ -368,7 +372,7 @@ function generateActionStepsForSubtask(subtaskName: string, prompt: string, sIdx
 
 // Background builder that executes subtasks sequentially
 // and writes real-time logs and generated files!
-export async function executeAgentBuild(prompt: string, tasks: Task[]) {
+export async function executeAgentBuild(prompt: string, tasks: Task[], env?: Partial<AppEnv>) {
   const startTime = Date.now();
   console.log(`Starting execution for prompt: ${prompt}`);
   activeCancellationSignal = { aborted: false, taskId: "" };
@@ -518,7 +522,7 @@ export async function executeAgentBuild(prompt: string, tasks: Task[]) {
         // If on writing step, we actually generate a file related to the subtask and save it!
         if (currentStep.log.includes("Writing code implementation")) {
           try {
-            const ai = getGeminiClient();
+            const ai = getGeminiClient(env);
             const filePrompt = `You are a professional full-stack developer. Write a fully-functional, beautiful, complete TypeScript React file, Express router, HTML, or schema file for the subtask: "${sub.name}" inside the larger project of: "${prompt}". Return ONLY the code, with no markdown tags, and no conversational text. Start with the code directly.`;
             
             const sysLog = `[SYSTEM] Requesting AI code synthesis for code modules...`;
@@ -648,12 +652,14 @@ export async function executeAgentBuild(prompt: string, tasks: Task[]) {
 
   // Automatic GitHub Synchronization
   let gitPushStatus = "";
-  const gitToken = process.env.GITHUB_TOKEN;
-  const gitRepoUrl = process.env.GITHUB_REPO_URL;
+  const resolvedEnv = resolveEnvWithOverrides(env);
+  const gitToken = resolvedEnv.GITHUB_TOKEN;
+  const gitRepoUrl = resolvedEnv.GITHUB_REPO_URL;
   if (gitToken && gitRepoUrl && !activeCancellationSignal.aborted) {
     try {
       console.log("Automatic GitHub synchronization enabled. Triggering Git push sequence...");
-      const pushResult = await executeGitPush(gitToken, gitRepoUrl, "main");
+      const allFiles = await getFiles();
+      const pushResult = await executeGitPush(gitToken, gitRepoUrl, "main", allFiles);
       if (pushResult.success) {
         gitPushStatus = `\n\n🔄 **Auto-GitHub Sync**: Successfully pushed all new modifications directly to GitHub repository [${gitRepoUrl}] on the \`main\` branch!`;
       } else {

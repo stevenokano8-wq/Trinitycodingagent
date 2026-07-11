@@ -1,176 +1,149 @@
-import { exec } from "child_process";
-import { promisify } from "util";
-import fs from "fs";
-import path from "path";
-import dotenv from "dotenv";
+import { FileNode } from "../src/types.js";
+import { AppEnv, resolveEnvWithOverrides, setRuntimeOverrides } from "./env.js";
 
-const execAsync = promisify(exec);
-
+// Workers have no filesystem and no `git`/`child_process` binary, so pushing
+// to GitHub can no longer shell out to a local git checkout. Instead this
+// commits each tracked file directly through GitHub's REST Contents API
+// (fetch-based, works identically in Node and in Workers).
 export interface PushResult {
   success: boolean;
   message: string;
   logs: string[];
 }
 
-export function getGithubConfig() {
-  const token = process.env.GITHUB_TOKEN || "";
-  const repoUrl = process.env.GITHUB_REPO_URL || "";
+function parseRepo(repoUrl: string): { owner: string; repo: string } {
+  let ownerRepo = repoUrl.trim();
+  if (ownerRepo.startsWith("https://github.com/")) {
+    ownerRepo = ownerRepo.replace("https://github.com/", "");
+  } else if (ownerRepo.startsWith("git@github.com:")) {
+    ownerRepo = ownerRepo.replace("git@github.com:", "");
+  }
+  if (ownerRepo.endsWith(".git")) {
+    ownerRepo = ownerRepo.slice(0, -4);
+  }
+  ownerRepo = ownerRepo.replace(/^\/+|\/+$/g, "");
+
+  const parts = ownerRepo.split("/");
+  if (parts.length !== 2) {
+    throw new Error(`Invalid repository format "${repoUrl}". Expected format: "owner/repo" or "https://github.com/owner/repo"`);
+  }
+  return { owner: parts[0], repo: parts[1] };
+}
+
+async function ghFetch(token: string, url: string, init: RequestInit = {}): Promise<Response> {
+  return fetch(url, {
+    ...init,
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "User-Agent": "sovereign-agent",
+      Accept: "application/vnd.github+json",
+      "X-GitHub-Api-Version": "2022-11-28",
+      ...(init.headers || {}),
+    },
+  });
+}
+
+// btoa is available in both Workers and modern Node; Buffer is Node-only, so
+// prefer a UTF-8 safe btoa-based encoder that works in both runtimes.
+function toBase64(content: string): string {
+  const bytes = new TextEncoder().encode(content);
+  let binary = "";
+  for (const b of bytes) binary += String.fromCharCode(b);
+  return btoa(binary);
+}
+
+export function getGithubConfig(env?: Partial<AppEnv>) {
+  const resolved = resolveEnvWithOverrides(env);
+  const token = resolved.GITHUB_TOKEN || "";
+  const repoUrl = resolved.GITHUB_REPO_URL || "";
   return {
     repoUrl,
     hasToken: !!token,
-    maskedToken: token ? `${token.substring(0, 4)}••••••••` : ""
+    maskedToken: token ? `${token.substring(0, 4)}••••••••` : "",
   };
 }
 
-export function saveGithubConfig(token: string, repoUrl: string) {
-  const envPath = path.join(process.cwd(), ".env");
-  let envContent = "";
-  if (fs.existsSync(envPath)) {
-    envContent = fs.readFileSync(envPath, "utf8");
-  }
-
-  const updateEnvVar = (key: string, val: string) => {
-    const regex = new RegExp(`^${key}=.*$`, "m");
-    if (regex.test(envContent)) {
-      envContent = envContent.replace(regex, `${key}="${val}"`);
-    } else {
-      envContent += `\n${key}="${val}"`;
-    }
-  };
-
-  if (token !== undefined) {
-    updateEnvVar("GITHUB_TOKEN", token);
-  }
-  if (repoUrl !== undefined) {
-    updateEnvVar("GITHUB_REPO_URL", repoUrl);
-  }
-
-  fs.writeFileSync(envPath, envContent.trim() + "\n", "utf8");
-  dotenv.config({ override: true });
+// Workers have no writable `.env` — this stores the config as an in-memory
+// runtime override for the current session only (see server/env.ts).
+export function saveGithubConfig(token?: string, repoUrl?: string) {
+  const patch: Partial<AppEnv> = {};
+  if (token !== undefined) patch.GITHUB_TOKEN = token;
+  if (repoUrl !== undefined) patch.GITHUB_REPO_URL = repoUrl;
+  setRuntimeOverrides(patch);
 }
 
 export async function executeGitPush(
   token: string,
   repoUrl: string,
-  branch: string = "main"
+  branch: string = "main",
+  files: FileNode[]
 ): Promise<PushResult> {
   const logs: string[] = [];
-  const addLog = (msg: string) => {
-    logs.push(`[${new Date().toLocaleTimeString()}] ${msg}`);
-  };
+  const addLog = (msg: string) => logs.push(`[${new Date().toLocaleTimeString()}] ${msg}`);
 
   try {
     addLog("Parsing repository URL...");
-    let ownerRepo = repoUrl.trim();
-    
-    // Support URL like https://github.com/owner/repo or https://github.com/owner/repo.git
-    if (ownerRepo.startsWith("https://github.com/")) {
-      ownerRepo = ownerRepo.replace("https://github.com/", "");
-    } else if (ownerRepo.startsWith("git@github.com:")) {
-      ownerRepo = ownerRepo.replace("git@github.com:", "");
-    }
-    
-    if (ownerRepo.endsWith(".git")) {
-      ownerRepo = ownerRepo.slice(0, -4);
-    }
-    
-    // Clean up slash issues or leading/trailing characters
-    ownerRepo = ownerRepo.replace(/^\/+|\/+$/g, "");
-    
-    const parts = ownerRepo.split("/");
-    if (parts.length !== 2) {
-      throw new Error(`Invalid repository format "${repoUrl}". Expected format: "owner/repo" or "https://github.com/owner/repo"`);
-    }
-    
-    const [owner, repo] = parts;
+    const { owner, repo } = parseRepo(repoUrl);
     addLog(`Target repository identified: ${owner}/${repo}`);
-    
-    const authenticatedUrl = `https://x-access-token:${token}@github.com/${owner}/${repo}.git`;
-    
-    const cwd = process.cwd();
-    addLog("Initializing local Git repository context...");
-    
-    // Check if .git directory exists, if not initialize it
-    if (!fs.existsSync(path.join(cwd, ".git"))) {
-      await execAsync("git init", { cwd });
-      addLog("Local Git repository initialized.");
-    } else {
-      addLog("Existing Git context detected.");
+
+    const base = `https://api.github.com/repos/${owner}/${repo}`;
+
+    if (!files || files.length === 0) {
+      addLog("No generated files tracked in this session. Nothing to push.");
+      return { success: true, message: "No files to push", logs };
     }
-    
-    // Configure user name and email
-    addLog("Configuring Git user credentials...");
-    await execAsync('git config user.name "Sovereign Agent"', { cwd });
-    await execAsync('git config user.email "agent@sovereign.build"', { cwd });
-    
-    // Configure the remote URL
-    addLog("Configuring remote repository origin...");
-    try {
-      await execAsync("git remote remove origin", { cwd });
-    } catch (e) {
-      // Ignore if origin doesn't exist
+
+    // Confirm the branch exists; if not, GitHub will create it implicitly on
+    // first commit only if we reference an existing base — otherwise report a
+    // clear error instead of silently failing.
+    addLog(`Verifying branch "${branch}" exists on remote...`);
+    const branchRes = await ghFetch(token, `${base}/branches/${encodeURIComponent(branch)}`);
+    if (branchRes.status === 404) {
+      addLog(`Branch "${branch}" does not exist yet on the remote — it will be created from the first commit.`);
+    } else if (!branchRes.ok) {
+      const body = await branchRes.text();
+      throw new Error(`Failed to inspect branch "${branch}": ${branchRes.status} ${body}`);
     }
-    await execAsync(`git remote add origin "${authenticatedUrl}"`, { cwd });
-    
-    // Rename current branch or checkout to target branch
-    addLog(`Setting local branch context to "${branch}"...`);
-    try {
-      // Try to rename current branch to the target branch name first
-      await execAsync(`git branch -M "${branch}"`, { cwd });
-    } catch (e) {
-      // If that fails, try checkouting
-      try {
-        await execAsync(`git checkout -b "${branch}"`, { cwd });
-      } catch (e2) {
-        await execAsync(`git checkout "${branch}"`, { cwd });
+
+    let pushedCount = 0;
+    for (const file of files) {
+      addLog(`Committing ${file.path}...`);
+
+      // Look up the existing file's SHA (required by the Contents API to
+      // update rather than create), tolerating a 404 for new files.
+      let sha: string | undefined;
+      const getRes = await ghFetch(token, `${base}/contents/${encodeURIComponent(file.path)}?ref=${encodeURIComponent(branch)}`);
+      if (getRes.ok) {
+        const existing: any = await getRes.json();
+        sha = existing.sha;
+      } else if (getRes.status !== 404) {
+        const body = await getRes.text();
+        addLog(`[WARN] Could not read existing file ${file.path} (${getRes.status}): ${body}`);
       }
-    }
-    
-    // Stage all changes
-    addLog("Staging modified project files...");
-    await execAsync("git add -A", { cwd });
-    
-    // Check if there are any changes to commit
-    let hasChanges = false;
-    try {
-      const statusOutput = await execAsync("git status --porcelain", { cwd });
-      if (statusOutput.stdout.trim().length > 0) {
-        hasChanges = true;
+
+      const putRes = await ghFetch(token, `${base}/contents/${encodeURIComponent(file.path)}`, {
+        method: "PUT",
+        body: JSON.stringify({
+          message: "Synchronized project with Sovereign Agent build cluster",
+          content: toBase64(file.content),
+          branch,
+          sha,
+        }),
+      });
+
+      if (!putRes.ok) {
+        const body = await putRes.text();
+        throw new Error(`Failed to commit ${file.path}: ${putRes.status} ${body}`);
       }
-    } catch (e) {
-      hasChanges = true; // Fallback to try commit
+      pushedCount++;
     }
-    
-    if (hasChanges) {
-      addLog("Creating commit snapshot...");
-      await execAsync(`git commit -m "Synchronized project with Sovereign Agent build cluster"`, { cwd });
-      addLog("Changes committed successfully.");
-    } else {
-      addLog("No changes detected in workspace. Proceeding to synchronize remote...");
-    }
-    
-    // Push the changes using force push to make sure it succeeds even if remote is out of sync
-    addLog(`Pushing files to remote branch origin/${branch}...`);
-    const pushCmd = `git push -u origin "${branch}" --force`;
-    await execAsync(pushCmd, { cwd });
-    addLog("Workspace synchronized successfully with remote repository!");
-    
-    return {
-      success: true,
-      message: "Push successful",
-      logs
-    };
+
+    addLog(`Workspace synchronized successfully with remote repository! (${pushedCount} file(s) committed)`);
+    return { success: true, message: "Push successful", logs };
   } catch (err: any) {
-    let errorMsg = err.message || "Unknown Git operation error";
-    // Sanitize any token leaks
-    if (token) {
-      errorMsg = errorMsg.split(token).join("••••••••");
-    }
-    addLog(`[ERROR] Git push failed: ${errorMsg}`);
-    return {
-      success: false,
-      message: errorMsg,
-      logs
-    };
+    let errorMsg = err.message || "Unknown GitHub sync error";
+    if (token) errorMsg = errorMsg.split(token).join("••••••••");
+    addLog(`[ERROR] GitHub sync failed: ${errorMsg}`);
+    return { success: false, message: errorMsg, logs };
   }
 }

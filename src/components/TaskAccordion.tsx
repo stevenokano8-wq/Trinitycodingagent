@@ -1,3 +1,4 @@
+import { API_BASE } from "../lib/api.ts";
 import React, { useState, useEffect, useMemo } from "react";
 import { Task, Subtask } from "../types.js";
 import { 
@@ -389,7 +390,7 @@ export default function TaskAccordion({
   const handleCancel = async (e: React.MouseEvent) => {
     e.stopPropagation();
     try {
-      await fetch("/api/tasks/cancel", {
+      await fetch(`${API_BASE}/api/tasks/cancel`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ taskId: task.id })

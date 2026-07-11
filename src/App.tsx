@@ -28,6 +28,7 @@ import {
 import { motion, AnimatePresence } from "motion/react";
 import { Message, Task, FileNode, DatabaseStatus } from "./types.js";
 import TaskAccordion from "./components/TaskAccordion.tsx";
+import { API_BASE } from "./lib/api.ts";
 import CodeView from "./components/CodeView.tsx";
 import PreviewView from "./components/PreviewView.tsx";
 import DbVisualizer from "./components/DbVisualizer.tsx";
@@ -349,7 +350,7 @@ export default function App() {
 
     // 2. Sync to Express Backend
     try {
-      await fetch("/api/session/load", {
+      await fetch(`${API_BASE}/api/session/load`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -421,22 +422,22 @@ export default function App() {
   const fetchInitialData = async () => {
     try {
       // 1. Fetch DB Statuses
-      const statusRes = await fetch("/api/db-status");
+      const statusRes = await fetch(`${API_BASE}/api/db-status`);
       const statusData = await statusRes.json();
       setDbStatus({ d1: statusData.d1, kv: statusData.kv });
 
       // 2. Fetch Chat History
-      const msgRes = await fetch("/api/messages");
+      const msgRes = await fetch(`${API_BASE}/api/messages`);
       const msgData = await msgRes.json();
       setMessages(msgData);
 
       // 3. Fetch Active Tasks
-      const taskRes = await fetch("/api/tasks");
+      const taskRes = await fetch(`${API_BASE}/api/tasks`);
       const taskData = await taskRes.json();
       setTasks(taskData);
 
       // 4. Fetch Synthesized Files
-      const fileRes = await fetch("/api/files");
+      const fileRes = await fetch(`${API_BASE}/api/files`);
       const fileData = await fileRes.json();
       setFiles(fileData);
 
@@ -459,7 +460,7 @@ export default function App() {
     }
 
     console.log("Establishing Server-Sent Events real-time connection...");
-    const eventSource = new EventSource("/api/tasks/stream");
+    const eventSource = new EventSource(`${API_BASE}/api/tasks/stream`);
     eventSourceRef.current = eventSource;
 
     eventSource.onopen = () => {
@@ -624,7 +625,7 @@ export default function App() {
     setMessages(prev => [...prev, optimMsg]);
 
     try {
-      const res = await fetch("/api/messages", {
+      const res = await fetch(`${API_BASE}/api/messages`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ role: "user", content: userText }),
@@ -657,7 +658,7 @@ export default function App() {
     // Send a real file update to the server and trigger auto-GitHub push
     try {
       const targetFile = files.find(f => f.path === path);
-      const res = await fetch("/api/files/save", {
+      const res = await fetch(`${API_BASE}/api/files/save`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -679,7 +680,7 @@ export default function App() {
 
   const handleClearSession = async () => {
     try {
-      await fetch("/api/session/clear", { method: "POST" });
+      await fetch(`${API_BASE}/api/session/clear`, { method: "POST" });
     } catch (e) {
       console.error("Purge error:", e);
     }

@@ -40,6 +40,7 @@ import NotificationsView from "./components/NotificationsView.tsx";
 import ScreenshotsView from "./components/ScreenshotsView.tsx";
 import SettingsView from "./components/SettingsView.tsx";
 import SubtasksSimulationView from "./components/SubtasksSimulationView.tsx";
+import FaceswapChatView from "./components/FaceswapChatView.tsx";
 
 function renderMarkdownMessage(content: string) {
   const lines = content.split("\n");
@@ -232,7 +233,7 @@ export default function App() {
 
   // Navigation State
   const [activeTab, setActiveTab] = useState<
-    "chat" | "preview" | "code" | "database" | "logs" | "deploy" | "github" | "permissions" | "settings" | "supabase" | "notifications" | "screenshots" | "simulation"
+    "chat" | "preview" | "code" | "database" | "logs" | "deploy" | "github" | "permissions" | "settings" | "supabase" | "notifications" | "screenshots" | "simulation" | "faceswap"
   >("chat");
   const [isMoreMenuOpen, setIsMoreMenuOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -889,7 +890,7 @@ export default function App() {
           <button
             id="tab-btn-preview"
             onClick={() => setActiveTab("preview")}
-            className={`flex items-center gap-1 sm:gap-2 px-3 sm:px-5 py-1.5 sm:py-2 rounded-full text-[11px] sm:text-xs font-semibold transition-all whitespace-nowrap shrink-0 ${
+            className={`flex items-center gap-1 sm:gap-2 px-3 sm:px-5 py-1.5 sm:py-2 rounded-full text-[11px] sm:text-xs font-semibold transition-all whitespace-nowrap shrink-0 md:hidden ${
               activeTab === "preview" 
                 ? "bg-white text-gray-900 shadow-sm" 
                 : "text-gray-500 hover:text-gray-900"
@@ -905,7 +906,7 @@ export default function App() {
               id="tab-btn-more"
               onClick={() => setIsMoreMenuOpen(!isMoreMenuOpen)}
               className={`flex items-center gap-1 sm:gap-2 px-2.5 sm:px-5 py-1.5 sm:py-2 rounded-full text-[11px] sm:text-xs font-semibold transition-all whitespace-nowrap shrink-0 ${
-                !["chat", "preview"].includes(activeTab) ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"
+                !["chat", "preview", "faceswap"].includes(activeTab) ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"
               }`}
             >
               <span>More</span>
@@ -979,8 +980,11 @@ export default function App() {
       </header>
 
       {/* Main Body Stage */}
-      <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 flex flex-col min-h-0 relative">
-        <AnimatePresence mode="wait">
+      <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 flex flex-col md:flex-row gap-6 min-h-0 relative">
+        
+        {/* Left Column (active workspace view) */}
+        <div className={`flex-1 flex flex-col min-h-0 ${activeTab === "preview" ? "hidden md:flex" : "flex"}`}>
+          <AnimatePresence mode="wait">
           
           {/* 1. CHAT WORKSPACE VIEW */}
           {activeTab === "chat" && (
@@ -1346,16 +1350,21 @@ export default function App() {
             </motion.div>
           )}
 
-          {/* 2. PREVIEW TAB VIEW */}
-          {activeTab === "preview" && (
+          {/* 14. FACESWAP CHAT VIEW */}
+          {activeTab === "faceswap" && (
             <motion.div
-              key="preview-panel"
-              initial={{ opacity: 0, scale: 0.98 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.98 }}
+              key="faceswap-panel"
+              initial={{ opacity: 0, y: 15 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -15 }}
               className="flex-1 flex flex-col min-h-0"
             >
-              <PreviewView currentPrompt={currentPrompt} files={files} previewReloadKey={previewReloadKey} />
+              <FaceswapChatView 
+                activePersona={activePersona}
+                setActivePersona={setActivePersona}
+                PERSONAS={PERSONAS}
+                currentPersonaObj={currentPersonaObj}
+              />
             </motion.div>
           )}
 
@@ -1501,7 +1510,14 @@ export default function App() {
             </motion.div>
           )}
 
-        </AnimatePresence>
+          </AnimatePresence>
+        </div>
+
+        {/* Right Column (always-on live preview for large screens; full-screen on mobile when Preview active) */}
+        <div className={`w-full md:w-[46%] lg:w-[48%] flex flex-col min-h-0 shrink-0 ${activeTab === "preview" ? "flex" : "hidden md:flex"}`}>
+          <PreviewView currentPrompt={currentPrompt} files={files} previewReloadKey={previewReloadKey} />
+        </div>
+
       </main>
 
       {/* Floating Settings configuration Modal */}
@@ -1546,29 +1562,26 @@ export default function App() {
                     <Sparkles className="h-3.5 w-3.5 text-amber-500 animate-pulse" />
                     <span>Faceswap: Active Persona</span>
                   </h4>
-                  <div className="grid grid-cols-2 gap-2">
-                    {PERSONAS.map((p) => {
-                      const isActive = activePersona === p.id;
-                      const Icon = p.icon;
-                      return (
-                        <button
-                          key={p.id}
-                          id={`btn-faceswap-${p.id}`}
-                          onClick={() => setActivePersona(p.id)}
-                          className={`flex flex-col items-center justify-center p-3 rounded-2xl border text-center transition-all cursor-pointer ${
-                            isActive
-                              ? `${p.badgeColor} border-transparent text-white shadow-md font-semibold`
-                              : "bg-gray-50/50 hover:bg-gray-100 border-gray-150 text-gray-700"
-                          }`}
-                          title={p.description}
-                        >
-                          <Icon className={`h-4.5 w-4.5 mb-1 shrink-0 ${isActive ? "text-white" : "text-gray-500"}`} />
-                          <span className="text-[10px] font-bold tracking-tight leading-tight">{p.name.split(" ")[0]}</span>
-                          <span className="text-[8px] opacity-75 font-mono">{p.name.split(" ")[1]}</span>
-                        </button>
-                      );
-                    })}
-                  </div>
+                  
+                  <button
+                    id="btn-faceswap-chat-link"
+                    onClick={() => {
+                      setActiveTab("faceswap");
+                      setIsSidebarOpen(false);
+                    }}
+                    className="w-full flex items-center justify-between p-3.5 rounded-2xl border border-amber-100 bg-amber-50/50 hover:bg-amber-50 text-amber-900 shadow-3xs transition-all cursor-pointer font-sans"
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <div className="h-8 w-8 rounded-full bg-amber-500 flex items-center justify-center text-white shrink-0 animate-pulse">
+                        <Sparkles className="h-4 w-4" />
+                      </div>
+                      <div className="text-left">
+                        <p className="text-xs font-bold">Faceswap Chat</p>
+                        <p className="text-[9px] text-amber-600 font-mono">Launch Swap Interface</p>
+                      </div>
+                    </div>
+                    <ChevronDown className="h-4 w-4 text-amber-500 -rotate-90 shrink-0" />
+                  </button>
                 </div>
 
                 {/* Chat History Section */}

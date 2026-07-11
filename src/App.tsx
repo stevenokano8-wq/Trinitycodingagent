@@ -1514,7 +1514,7 @@ export default function App() {
         </div>
 
         {/* Right Column (always-on live preview for large screens; full-screen on mobile when Preview active) */}
-        <div className={`w-full md:w-[46%] lg:w-[48%] flex flex-col min-h-0 shrink-0 ${activeTab === "preview" ? "flex" : "hidden md:flex"}`}>
+        <div className={`w-full md:w-[46%] lg:w-[48%] flex flex-col min-h-0 shrink-0 ${activeTab === "faceswap" ? "hidden" : activeTab === "preview" ? "flex" : "hidden md:flex"}`}>
           <PreviewView currentPrompt={currentPrompt} files={files} previewReloadKey={previewReloadKey} />
         </div>
 

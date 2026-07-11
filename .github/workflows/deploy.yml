@@ -20,8 +20,14 @@ jobs:
           node-version: "22"
           cache: "npm"
 
+      - name: Upgrade npm
+        # Works around a known npm 10.8.x bug ("Exit handler never called!")
+        # that intermittently crashes `npm ci` on installs with platform-
+        # specific optional deps (wrangler/esbuild/workerd binaries).
+        run: npm install -g npm@11
+
       - name: Install dependencies
-        run: npm ci || npm ci
+        run: npm ci
 
       - name: Typecheck
         run: npm run lint

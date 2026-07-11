@@ -334,3 +334,21 @@ app.get("/api/tasks/stream", (c) => {
 });
 
 export default app;
+
+// Legacy Durable Object classes from earlier iterations of this worker
+// (sandboxed code execution, project tooling, agent sessions) are still
+// registered against this script account-side. Cloudflare requires every
+// deploy to keep exporting a class name it has ever bound, to avoid
+// silently orphaning any storage those objects hold. None of this repo's
+// code uses them anymore, so these are inert stubs kept only to satisfy
+// that platform requirement.
+class LegacyDurableObjectStub {
+  constructor(_state: unknown, _env: unknown) {}
+  async fetch(): Promise<Response> {
+    return new Response("This Durable Object class is retired and no longer in use.", { status: 410 });
+  }
+}
+
+export class Sandbox extends LegacyDurableObjectStub {}
+export class ProjectTools extends LegacyDurableObjectStub {}
+export class AgentSession extends LegacyDurableObjectStub {}

@@ -1,3 +1,4 @@
+import { API_BASE } from "../lib/api.ts";
 import React, { useState, useEffect, useRef } from "react";
 import { 
   Github, 
@@ -67,7 +68,7 @@ export default function GithubView() {
 
   const loadConfig = async () => {
     try {
-      const res = await fetch("/api/github/config");
+      const res = await fetch(`${API_BASE}/api/github/config`);
       if (res.ok) {
         const data = await res.json();
         setRepoUrl(data.repoUrl || "");
@@ -86,7 +87,7 @@ export default function GithubView() {
     setSaveMessage(null);
 
     try {
-      const res = await fetch("/api/github/config", {
+      const res = await fetch(`${API_BASE}/api/github/config`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -124,7 +125,7 @@ export default function GithubView() {
     setPushLogs(["[SYSTEM] Preparing workspace push sequence...", "[SYSTEM] Staging active files..."]);
 
     try {
-      const res = await fetch("/api/github/push", {
+      const res = await fetch(`${API_BASE}/api/github/push`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

@@ -62,3 +62,53 @@ Otherwise, follow debugging best practices:
 2. When selecting which version of an API or package to use, choose one that is compatible with the USER's dependency management file. If no such file exists or if the package is not present, use the latest version that is in your training data.
 3. If an external API requires an API Key, be sure to point this out to the USER. Adhere to best security practices (e.g. DO NOT hardcode an API key in a place where it can be exposed)
 </calling_external_apis>
+
+# 🌐 System Architecture & Ownership Blueprint
+
+To ensure a seamless transition from the infrastructure phase to the active runtime phase, here is the exact division of labor across all components of our system.
+
+---
+
+## 🛠️ 1. What the Replit Agent Completed (Infrastructure & CI/CD)
+
+The Replit agent was used strictly as a construction crew to adapt the web repository code for serverless edge deployment and automate the delivery pipeline. It has completed the following:
+
+* **Migrated Storage to Native Cloudflare:** Replaced traditional PostgreSQL (`pg`) and Redis (`ioredis`) node drivers with native **Cloudflare D1** (Relational SQL Database) and **Cloudflare KV** (Key-Value Cache).
+* **Restructured Backend Architecture:** Rewrote the backend into a clean Hono app framework (`server/worker.ts`) capable of executing within lightweight Cloudflare edge environments.
+* **Fixed Production API Routing Bug:** Created `src/lib/api.ts` with a production `API_BASE` pointer targeting `https://agent-api.trinityuniverse.org` to eliminate cross-subdomain silent routing failures.
+* **Automated the CI/CD Pipeline:** Built a custom `.github/workflows/deploy.yml` pipeline. Any code commit pushed to the `main` branch of the GitHub repository automatically compiles, type-checks, and builds to production.
+* **Preserved Legacy Databases:** Maintained the separation of older, pre-existing resources (such as `sovereign-db`) to ensure background tasks remain completely untouched.
+
+---
+
+## 🪐 2. What the Antigravity Agent Path Handles (Execution & Runtime)
+
+The Antigravity agent is the hands-on system developer, workspace automation layer, and isolated runtime conductor. It manages the active application operations:
+
+* **Manages Isolated Sandboxes:** Orchestrates the secure local sandbox environments where dynamic scripts, Python code, and experimental dependencies can execute safely without breaking edge runtime constraints.
+* **Controls Local Workspace State & File Bunkers:** Updates and synchronizes the underlying workspace structures, secure local bunker files, and repository assets.
+* **Resolves Execution Stalls:** Intercepts and refactors runtime bottlenecks—such as clearing out old, frozen PostgreSQL initialization blocks inside the simulation panels and migrating them to use lightweight data models.
+* **Drives UI Component Integrity:** Troubleshoots and refactors active frontend views (such as `TaskAccordion.tsx`) to guarantee that tasks seamlessly cycle from *Pending* to *Success* without locking up visual transitions.
+* **Synchronizes Production Releases:** Automatically edits code modifications, commits the adjustments locally, and pushes clean builds to GitHub to fire off the live Cloudflare deployment loop.
+
+---
+
+## ☁️ 3. What Cloudflare Is Handling (Public Network Perimeter)
+
+Cloudflare operates as the live public delivery layer, routing system traffic securely across our custom domain mesh:
+
+* **Frontend UI Gateway (`https://agent.trinityuniverse.org`):** Hosts and instantly serves the built, compiled React/Vite web application as ultra-fast static assets.
+* **Backend API Engine (`https://agent-api.trinityuniverse.org`):** Executes the serverless edge logic, routing dynamic request events and hosting the live application endpoints.
+* **Persistent Edge Storage:** Houses the application state tables via native **Cloudflare D1** and handles lightning-fast session values using **Cloudflare KV**.
+* **Protected Production Mapping:** Isolates the primary web property (`trinityuniverse.org`) under strict **DNS Only (Grey Cloud)** routing to guarantee zero service interruptions while subdomains run independently.
+
+---
+
+## 🧠 4. What Google Is Handling (Core AI Processing & Heavy Compute)
+
+Google powers the heavy computational machinery and high-level abstract generation workflows:
+
+* **Core Cognitive Processing:** Utilizes Gemini models to parse intricate prompts, break down system task goals, and generate programmatic code logic.
+* **Development Workspace Environment:** Backs the playground canvas via AI Studio / Firebase frameworks where complex system configurations and large file structures are organized.
+* **LLM Generation Pipelines:** Delivers highly structured string outputs, layouts, and data components to be fed directly into the system's runtime execution lanes.
+

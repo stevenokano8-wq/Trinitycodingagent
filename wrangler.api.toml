@@ -24,3 +24,9 @@ id = "b3301c5ec88a409d964b4303e880618b"
 # Secrets (GEMINI_API_KEY, GITHUB_TOKEN, GITHUB_REPO_URL) are set via
 # `wrangler secret put <NAME> --config wrangler.api.toml` or the Cloudflare
 # dashboard — never committed here.
+
+[[migrations]]
+tag = "v2_delete_project_tools"
+new_classes = []
+deleted_classes = ["ProjectTools"]
+

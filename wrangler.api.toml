@@ -25,7 +25,14 @@ id = "b3301c5ec88a409d964b4303e880618b"
 # `wrangler secret put <NAME> --config wrangler.api.toml` or the Cloudflare
 # dashboard — never committed here.
 
+# Migrations are ADDITIVE — never remove a previous tag or Wrangler will
+# warn that a previously-applied tag is missing and may re-apply migrations.
 [[migrations]]
-tag = "v3_delete_legacy_durable_objects"
+tag = "v2_delete_project_tools"
 new_classes = []
-deleted_classes = ["ProjectTools", "AgentSession"]
+deleted_classes = ["ProjectTools"]
+
+[[migrations]]
+tag = "v3_delete_agent_session"
+new_classes = []
+deleted_classes = ["AgentSession"]

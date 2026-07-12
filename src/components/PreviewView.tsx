@@ -776,35 +776,19 @@ function AgentWorkingPortal({ activeTask }: { activeTask: any }) {
 
 function GenericSimulator({ currentPrompt }: { currentPrompt: string }) {
   return (
-    <div className="flex-1 flex flex-col items-center justify-center text-center p-8 bg-slate-900 text-white">
-      <div className="max-w-md space-y-6">
-        <div className="relative flex items-center justify-center w-24 h-24 mx-auto">
-          <span className="animate-ping absolute inline-flex h-16 w-16 rounded-full bg-emerald-500/10 opacity-75"></span>
-          <span className="animate-pulse absolute inline-flex h-20 w-20 rounded-full bg-emerald-500/5"></span>
-          <div className="relative p-5 bg-emerald-500/10 rounded-full border border-emerald-500/20 text-emerald-400">
-            <Activity className="h-8 w-8" />
-          </div>
+    <div className="flex-1 flex flex-col items-center justify-center text-center p-8 bg-slate-900 text-white select-none">
+      <div className="max-w-md space-y-4">
+        <div className="p-4 bg-indigo-500/10 rounded-full text-indigo-400 w-16 h-16 flex items-center justify-center mx-auto mb-2 border border-indigo-500/20">
+          <Activity className="h-7 w-7 animate-pulse" />
         </div>
         
-        <div className="space-y-2">
-          <h3 className="font-bold text-xl font-display tracking-tight text-white flex items-center justify-center gap-2">
-            Workspace Engine Ready
-          </h3>
-          <p className="text-xs text-slate-400 font-mono tracking-wider uppercase">
-            ● Listening for workspace updates
-          </p>
-        </div>
-
+        <h3 className="font-bold text-xl font-display tracking-tight text-white">
+          Workspace Engine Ready
+        </h3>
+        
         <p className="text-sm text-slate-300 leading-relaxed font-sans px-4">
-          The sandboxed live preview is hot-synced and stands ready. When the agent starts creating files or processing tasks, this workspace will dynamically spin up and render active progress and preview layouts instantly.
+          Workspace will dynamically spin up and render active progress and preview layout instantly
         </p>
-
-        <div className="pt-2">
-          <div className="inline-flex items-center gap-2 px-3 py-1 bg-slate-950/80 rounded-full border border-slate-800 text-[10px] text-emerald-400 font-mono">
-            <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-ping"></span>
-            <span>TCP Ingress: Port 3000 Active</span>
-          </div>
-        </div>
       </div>
     </div>
   );

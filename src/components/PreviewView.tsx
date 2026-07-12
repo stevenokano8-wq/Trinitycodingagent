@@ -1,13 +1,21 @@
 import React, { useState, useEffect } from "react";
-import { Play, RefreshCw, Smartphone, Monitor, ShieldAlert, ArrowLeft, ArrowRight, FolderOpen, Database, Sparkles, Terminal } from "lucide-react";
+import { Play, RefreshCw, Smartphone, Monitor, ShieldAlert, ArrowLeft, ArrowRight, FolderOpen, Database, Sparkles, Terminal, CheckCircle2, Loader2, Activity, Cpu, Layers } from "lucide-react";
 
 interface PreviewViewProps {
   currentPrompt: string;
   files?: { path: string; content: string; language: string }[];
   previewReloadKey?: number;
+  tasks?: any[];
+  isSending?: boolean;
 }
 
-export default function PreviewView({ currentPrompt, files = [], previewReloadKey = 0 }: PreviewViewProps) {
+export default function PreviewView({ 
+  currentPrompt, 
+  files = [], 
+  previewReloadKey = 0,
+  tasks = [],
+  isSending = false
+}: PreviewViewProps) {
   const [device, setDevice] = useState<"desktop" | "mobile">("desktop");
   const [isRefreshing, setIsRefreshing] = useState(false);
 
@@ -23,6 +31,9 @@ export default function PreviewView({ currentPrompt, files = [], previewReloadKe
   const isTodoPrompt = currentPrompt.toLowerCase().includes("todo") || currentPrompt.toLowerCase().includes("task");
   const isCalculatorPrompt = currentPrompt.toLowerCase().includes("calc");
   const isNotesPrompt = currentPrompt.toLowerCase().includes("note") || currentPrompt.toLowerCase().includes("journal");
+  
+  const activeTask = tasks.find(t => t.status === "running" || t.status === "pending");
+  const isAgentActive = isSending || !!activeTask;
   
   const handleRefresh = () => {
     setIsRefreshing(true);
@@ -122,6 +133,8 @@ export default function PreviewView({ currentPrompt, files = [], previewReloadKe
               <RefreshCw className="h-10 w-10 text-gray-300 animate-spin mb-3" />
               <p className="text-xs font-mono text-gray-500">Hot reloading virtual workspace server state...</p>
             </div>
+          ) : isAgentActive ? (
+            <AgentWorkingPortal activeTask={activeTask} />
           ) : fileCount > 0 ? (
             /* SOVEREIGN DYNAMIC COMPILER - Live rendering of generated source code */
             <DynamicSovereignWorkspace 
@@ -653,23 +666,144 @@ function NotesSimulator() {
   );
 }
 
+function AgentWorkingPortal({ activeTask }: { activeTask: any }) {
+  const taskName = activeTask?.name || "Synthesizing workspace changes";
+  const progress = activeTask?.progress || 35;
+  const subtasks = activeTask?.subtasks || [];
+
+  return (
+    <div className="flex-1 flex flex-col bg-slate-950 text-white select-none">
+      <div className="px-6 py-4 border-b border-slate-900 bg-slate-950/60 flex items-center justify-between text-xs font-mono text-slate-400">
+        <span className="flex items-center gap-2 text-amber-500">
+          <Cpu className="h-3.5 w-3.5 animate-pulse text-amber-400" />
+          <span>COMPILATION TUNNEL ACTIVE</span>
+        </span>
+        <span className="text-[10px] bg-amber-500/10 text-amber-400 border border-amber-500/20 px-2 py-0.5 rounded animate-pulse">
+          STAGE SYNCHRONIZING
+        </span>
+      </div>
+
+      <div className="flex-1 p-6 md:p-8 flex flex-col md:grid md:grid-cols-12 gap-8 items-center justify-center overflow-y-auto">
+        <div className="md:col-span-5 flex flex-col items-center justify-center space-y-4">
+          <div className="relative w-40 h-40 flex items-center justify-center">
+            <div className="absolute inset-0 rounded-full border-2 border-dashed border-amber-500/20 animate-spin" style={{ animationDuration: "12s" }} />
+            <div className="absolute inset-2 rounded-full border border-dashed border-indigo-500/40 animate-spin" style={{ animationDuration: "6s", animationDirection: "reverse" }} />
+            <div className="absolute inset-4 rounded-full border border-emerald-500/20" />
+            
+            <div className="relative w-28 h-28 bg-slate-900 rounded-full flex flex-col items-center justify-center border border-slate-800 shadow-2xl">
+              <Sparkles className="h-7 w-7 text-amber-400 animate-pulse mb-1" />
+              <span className="text-xl font-bold font-mono tracking-tighter text-white">{progress}%</span>
+              <span className="text-[9px] text-slate-500 uppercase tracking-widest font-mono">Syncing</span>
+            </div>
+          </div>
+          
+          <div className="text-center space-y-1">
+            <h4 className="font-bold text-sm font-display text-white max-w-[200px] truncate">{taskName}</h4>
+            <p className="text-[10px] text-slate-400 font-mono">Updating active app layers</p>
+          </div>
+        </div>
+
+        <div className="md:col-span-7 w-full flex flex-col justify-center space-y-4 h-full max-h-[340px] overflow-y-auto">
+          <h4 className="text-[11px] font-bold font-mono text-slate-400 uppercase tracking-wider">
+            Sovereign Pipeline Steps:
+          </h4>
+          
+          <div className="space-y-2.5">
+            {subtasks.length > 0 ? (
+              subtasks.map((sub: any, idx: number) => {
+                const isCompleted = sub.status === "completed";
+                const isRunning = sub.status === "running";
+                const isPending = sub.status === "pending" && !isRunning;
+
+                return (
+                  <div 
+                    key={sub.id || idx} 
+                    className={`flex items-start gap-3 p-2.5 rounded-xl transition-all duration-300 border ${
+                      isCompleted 
+                        ? "bg-emerald-950/20 border-emerald-500/20 text-emerald-300" 
+                        : isRunning
+                        ? "bg-amber-500/10 border-amber-500/25 text-amber-200 animate-pulse"
+                        : "bg-slate-900/40 border-slate-900 text-slate-500"
+                    }`}
+                  >
+                    <div className="mt-0.5 shrink-0">
+                      {isCompleted ? (
+                        <CheckCircle2 className="h-4.5 w-4.5 text-emerald-400" />
+                      ) : isRunning ? (
+                        <Loader2 className="h-4.5 w-4.5 text-amber-400 animate-spin" />
+                      ) : (
+                        <div className="h-4.5 w-4.5 rounded-full border border-slate-800 bg-slate-900 flex items-center justify-center text-[9px] font-mono font-bold text-slate-600">
+                          {idx + 1}
+                        </div>
+                      )}
+                    </div>
+                    
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-semibold truncate font-sans">{sub.name}</span>
+                        <span className={`text-[8px] font-bold font-mono uppercase px-1.5 py-0.5 rounded shrink-0 ${
+                          isCompleted 
+                            ? "bg-emerald-500/10 text-emerald-400" 
+                            : isRunning
+                            ? "bg-amber-500/10 text-amber-400"
+                            : "bg-slate-900 text-slate-500"
+                        }`}>
+                          {sub.status}
+                        </span>
+                      </div>
+                      
+                      {isRunning && sub.logs && sub.logs.length > 0 && (
+                        <div className="mt-1.5 text-[10px] font-mono text-amber-300/80 bg-slate-950 p-1.5 rounded-lg border border-amber-500/10 truncate max-w-sm">
+                          {sub.logs[sub.logs.length - 1]}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })
+            ) : (
+              <div className="p-4 bg-slate-900/40 border border-slate-900 rounded-xl text-center">
+                <Loader2 className="h-5 w-5 text-indigo-400 animate-spin mx-auto mb-2" />
+                <span className="text-xs font-mono text-slate-400">Receiving background step parameters...</span>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function GenericSimulator({ currentPrompt }: { currentPrompt: string }) {
   return (
     <div className="flex-1 flex flex-col items-center justify-center text-center p-8 bg-slate-900 text-white">
-      <div className="max-w-md space-y-4">
-        <div className="inline-block p-4 bg-amber-500/10 rounded-3xl border border-amber-500/20 text-amber-500">
-          <Play className="h-8 w-8 fill-amber-500 animate-pulse" />
+      <div className="max-w-md space-y-6">
+        <div className="relative flex items-center justify-center w-24 h-24 mx-auto">
+          <span className="animate-ping absolute inline-flex h-16 w-16 rounded-full bg-emerald-500/10 opacity-75"></span>
+          <span className="animate-pulse absolute inline-flex h-20 w-20 rounded-full bg-emerald-500/5"></span>
+          <div className="relative p-5 bg-emerald-500/10 rounded-full border border-emerald-500/20 text-emerald-400">
+            <Activity className="h-8 w-8" />
+          </div>
         </div>
-        <h3 className="font-bold text-xl font-display">Sovereign Project Live Simulator</h3>
-        <p className="text-sm text-slate-400 leading-relaxed font-sans">
-          Your project: <span className="text-white font-semibold italic">"{currentPrompt || "Untitled Application"}"</span> has been compiled and is currently running inside our sandboxed Node.js environment on port <span className="text-amber-400 font-bold font-mono">3001</span>.
+        
+        <div className="space-y-2">
+          <h3 className="font-bold text-xl font-display tracking-tight text-white flex items-center justify-center gap-2">
+            Workspace Engine Ready
+          </h3>
+          <p className="text-xs text-slate-400 font-mono tracking-wider uppercase">
+            ● Listening for workspace updates
+          </p>
+        </div>
+
+        <p className="text-sm text-slate-300 leading-relaxed font-sans px-4">
+          The sandboxed live preview is hot-synced and stands ready. When the agent starts creating files or processing tasks, this workspace will dynamically spin up and render active progress and preview layouts instantly.
         </p>
-        <div className="p-4 bg-slate-950 rounded-2xl border border-slate-800 text-left font-mono text-xs text-slate-500 space-y-1">
-          <div>$ npm run build</div>
-          <div className="text-emerald-400">✓ production bundle generated in 1.4s</div>
-          <div>$ node dist/server.cjs</div>
-          <div className="text-amber-500">Listening on http://0.0.0.0:3001</div>
-          <div className="text-sky-400">[HMR] Dev servers synchronized with Cloudflare D1 database and KV cache</div>
+
+        <div className="pt-2">
+          <div className="inline-flex items-center gap-2 px-3 py-1 bg-slate-950/80 rounded-full border border-slate-800 text-[10px] text-emerald-400 font-mono">
+            <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-ping"></span>
+            <span>TCP Ingress: Port 3000 Active</span>
+          </div>
         </div>
       </div>
     </div>

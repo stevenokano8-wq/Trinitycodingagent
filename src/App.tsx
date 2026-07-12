@@ -981,10 +981,10 @@ export default function App() {
       </header>
 
       {/* Main Body Stage */}
-      <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 flex flex-col md:flex-row gap-6 min-h-0 relative">
+      <main className="flex-1 max-w-[1800px] w-full mx-auto p-4 sm:p-6 flex flex-col md:grid md:grid-cols-10 gap-6 min-h-0 relative">
         
         {/* Left Column (active workspace view) */}
-        <div className={`flex-1 flex flex-col min-h-0 ${activeTab === "preview" ? "hidden md:flex" : "flex"}`}>
+        <div className={`md:col-span-4 flex flex-col min-h-0 ${activeTab === "preview" ? "hidden md:flex" : "flex"}`}>
           <AnimatePresence mode="wait">
           
           {/* 1. CHAT WORKSPACE VIEW */}
@@ -1515,8 +1515,8 @@ export default function App() {
         </div>
 
         {/* Right Column (always-on live preview for large screens; full-screen on mobile when Preview active) */}
-        <div className={`w-full md:w-[46%] lg:w-[48%] flex flex-col min-h-0 shrink-0 ${activeTab === "faceswap" ? "hidden" : activeTab === "preview" ? "flex" : "hidden md:flex"}`}>
-          <PreviewView currentPrompt={currentPrompt} files={files} previewReloadKey={previewReloadKey} />
+        <div className={`w-full md:col-span-6 flex flex-col min-h-0 ${activeTab === "faceswap" ? "hidden" : activeTab === "preview" ? "flex" : "hidden md:flex"}`}>
+          <PreviewView currentPrompt={currentPrompt} files={files} previewReloadKey={previewReloadKey} tasks={tasks} isSending={isSending} />
         </div>
 
       </main>

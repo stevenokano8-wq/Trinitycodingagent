@@ -23,16 +23,19 @@ id = "b3301c5ec88a409d964b4303e880618b"
 
 # Secrets (GEMINI_API_KEY, GITHUB_TOKEN, GITHUB_REPO_URL) are set via
 # `wrangler secret put <NAME> --config wrangler.api.toml` or the Cloudflare
-# dashboard — never committed here.
+# dashboard -- never committed here.
 
-# Migrations are ADDITIVE — never remove a previous tag or Wrangler will
-# warn that a previously-applied tag is missing and may re-apply migrations.
+# IMPORTANT: Migrations are ADDITIVE. Never rename or remove a tag that
+# Cloudflare has already applied -- Wrangler will try to re-apply everything
+# from scratch and fail with code 10074 if a class was already deleted.
+# v2 applied by run #19: removed ProjectTools
+# v3 applied by run #20: removed ProjectTools + AgentSession (both legacy DOs gone)
 [[migrations]]
 tag = "v2_delete_project_tools"
 new_classes = []
 deleted_classes = ["ProjectTools"]
 
 [[migrations]]
-tag = "v3_delete_agent_session"
+tag = "v3_delete_legacy_durable_objects"
 new_classes = []
-deleted_classes = ["AgentSession"]
+deleted_classes = ["ProjectTools", "AgentSession"]

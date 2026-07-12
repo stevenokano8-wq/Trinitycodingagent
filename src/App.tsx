@@ -845,7 +845,7 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col font-sans select-none overflow-x-hidden antialiased">
+    <div className="h-screen max-h-screen h-[100dvh] max-h-[100dvh] bg-slate-50 flex flex-col font-sans select-none overflow-hidden antialiased">
       
       {/* Top Banner Bar - matching screenshot exactly! */}
       <header className="bg-white border-b border-gray-100 px-3 sm:px-6 py-2.5 sm:py-4 flex items-center justify-between sticky top-0 z-40 shadow-xs gap-2">
@@ -981,10 +981,10 @@ export default function App() {
       </header>
 
       {/* Main Body Stage */}
-      <main className="flex-1 max-w-[1800px] w-full mx-auto p-4 sm:p-6 flex flex-col md:grid md:grid-cols-10 gap-6 min-h-0 relative">
+      <main className="flex-1 max-w-[1800px] w-full mx-auto p-4 sm:p-6 flex flex-col md:grid md:grid-cols-10 gap-6 min-h-0 relative overflow-hidden">
         
         {/* Left Column (active workspace view) */}
-        <div className={`md:col-span-4 flex flex-col min-h-0 ${activeTab === "preview" ? "hidden md:flex" : "flex"}`}>
+        <div className={`md:col-span-4 flex flex-col min-h-0 h-full overflow-hidden ${activeTab === "preview" ? "hidden md:flex" : "flex flex-1"}`}>
           <AnimatePresence mode="wait">
           
           {/* 1. CHAT WORKSPACE VIEW */}
@@ -1020,32 +1020,45 @@ export default function App() {
                   <div className="w-full shrink-0 z-30">
                     <form 
                       onSubmit={handleSendPrompt}
-                      className="w-full max-w-3xl mx-auto bg-white rounded-full px-5 py-3.5 shadow-md hover:shadow-lg transition-shadow border border-gray-150 flex items-center gap-3"
+                      className="w-full max-w-3xl mx-auto bg-white rounded-3xl px-5 py-3 shadow-md hover:shadow-lg transition-all border border-gray-150 flex items-end gap-3"
                     >
                       <button 
                         id="btn-input-plus"
                         type="button" 
                         onClick={() => { alert("Uploading file/attachment triggers coming soon in workspace..."); }}
-                        className="p-1.5 hover:bg-gray-100 rounded-full text-gray-400 hover:text-gray-700 transition-colors"
+                        className="p-1.5 hover:bg-gray-100 rounded-full text-gray-400 hover:text-gray-700 transition-colors mb-1"
                       >
                         <Plus className="h-5 w-5" />
                       </button>
 
-                      <input
+                      <textarea
                         id="input-prompt-command"
-                        type="text"
                         placeholder="Command the Titan-Lobe..."
                         value={inputText}
                         onChange={(e) => setInputText(e.target.value)}
-                        className="flex-1 min-w-0 bg-transparent border-none text-sm text-gray-800 focus:outline-none placeholder-gray-400"
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" && !e.shiftKey) {
+                            e.preventDefault();
+                            e.currentTarget.form?.requestSubmit();
+                          }
+                        }}
+                        rows={1}
+                        className="flex-1 min-w-0 bg-transparent border-none text-sm text-gray-800 focus:outline-none placeholder-gray-400 resize-none max-h-32 py-2.5 scrollbar-thin"
                         disabled={isSending}
+                        style={{ height: 'auto' }}
+                        ref={(el) => {
+                          if (el) {
+                            el.style.height = 'auto';
+                            el.style.height = `${el.scrollHeight}px`;
+                          }
+                        }}
                       />
 
                       <button
                         id="btn-input-submit"
                         type="submit"
                         disabled={!inputText.trim() || isSending}
-                        className="p-3 bg-black text-white hover:bg-zinc-800 rounded-full transition-all disabled:opacity-30 disabled:hover:bg-black select-none shrink-0"
+                        className="p-3 bg-black text-white hover:bg-zinc-800 rounded-full transition-all disabled:opacity-30 disabled:hover:bg-black select-none shrink-0 mb-0.5"
                       >
                         {isSending ? <Loader2 className="h-4.5 w-4.5 animate-spin text-white" /> : <Send className="h-4.5 w-4.5 text-white" />}
                       </button>
@@ -1304,30 +1317,43 @@ export default function App() {
                   <div className="w-full bg-slate-50/90 pt-3 pb-1 border-t border-gray-150/50 z-30 shrink-0">
                     <form 
                       onSubmit={handleSendPrompt}
-                      className="w-full max-w-3xl mx-auto bg-white rounded-full px-5 py-3.5 shadow-md hover:shadow-lg transition-shadow border border-gray-150 flex items-center gap-3"
+                      className="w-full max-w-3xl mx-auto bg-white rounded-3xl px-5 py-3 shadow-md hover:shadow-lg transition-all border border-gray-150 flex items-end gap-3"
                     >
                       <button 
                         id="btn-input-plus"
                         type="button" 
                         onClick={() => { alert("Uploading file/attachment triggers coming soon in workspace..."); }}
-                        className="p-1.5 hover:bg-gray-100 rounded-full text-gray-400 hover:text-gray-700 transition-colors"
+                        className="p-1.5 hover:bg-gray-100 rounded-full text-gray-400 hover:text-gray-700 transition-colors mb-1"
                       >
                         <Plus className="h-5 w-5" />
                       </button>
-                      <input
+                      <textarea
                         id="input-prompt-command"
-                        type="text"
                         placeholder="Command the Titan-Lobe..."
                         value={inputText}
                         onChange={(e) => setInputText(e.target.value)}
-                        className="flex-1 min-w-0 bg-transparent border-none text-sm text-gray-800 focus:outline-none placeholder-gray-400"
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" && !e.shiftKey) {
+                            e.preventDefault();
+                            e.currentTarget.form?.requestSubmit();
+                          }
+                        }}
+                        rows={1}
+                        className="flex-1 min-w-0 bg-transparent border-none text-sm text-gray-800 focus:outline-none placeholder-gray-400 resize-none max-h-32 py-2.5 scrollbar-thin"
                         disabled={isSending}
+                        style={{ height: 'auto' }}
+                        ref={(el) => {
+                          if (el) {
+                            el.style.height = 'auto';
+                            el.style.height = `${el.scrollHeight}px`;
+                          }
+                        }}
                       />
                       <button
                         id="btn-input-submit"
                         type="submit"
                         disabled={!inputText.trim() || isSending}
-                        className="p-3 bg-black text-white hover:bg-zinc-800 rounded-full transition-all disabled:opacity-30 disabled:hover:bg-black select-none shrink-0"
+                        className="p-3 bg-black text-white hover:bg-zinc-800 rounded-full transition-all disabled:opacity-30 disabled:hover:bg-black select-none shrink-0 mb-0.5"
                       >
                         {isSending ? <Loader2 className="h-4.5 w-4.5 animate-spin text-white" /> : <Send className="h-4.5 w-4.5 text-white" />}
                       </button>
@@ -1515,7 +1541,7 @@ export default function App() {
         </div>
 
         {/* Right Column (always-on live preview for large screens; full-screen on mobile when Preview active) */}
-        <div className={`w-full md:col-span-6 flex flex-col min-h-0 ${activeTab === "faceswap" ? "hidden" : activeTab === "preview" ? "flex" : "hidden md:flex"}`}>
+        <div className={`w-full md:col-span-6 flex flex-col min-h-0 h-full overflow-hidden ${activeTab === "faceswap" ? "hidden" : activeTab === "preview" ? "flex flex-1" : "hidden md:flex"}`}>
           <PreviewView currentPrompt={currentPrompt} files={files} previewReloadKey={previewReloadKey} tasks={tasks} isSending={isSending} />
         </div>
 

@@ -13,6 +13,12 @@ export interface Message {
   thoughtTimeSeconds?: number;
   modelName?: string;
   durationSeconds?: number;
+  attachment?: {
+    name: string;
+    type: string;
+    data: string;
+    size: number;
+  };
 }
 
 export interface Task {

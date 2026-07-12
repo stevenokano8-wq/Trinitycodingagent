@@ -44,23 +44,38 @@ export function broadcastSSE(event: string, data: any) {
 }
 
 // Generates tasks and subtasks structure based on a user prompt
-export async function planBuildTasks(userPrompt: string, env?: Partial<AppEnv>): Promise<Task[]> {
+export async function planBuildTasks(userPrompt: string, env?: Partial<AppEnv>, attachment?: any): Promise<Task[]> {
   try {
     const ai = getGeminiClient(env);
     console.log("Planning build tasks using Gemini...");
 
-    const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
-      contents: `You are Sovereign Agent, a highly execution-focused, expert full-stack development agent.
+    const promptText = `You are Sovereign Agent, a highly execution-focused, expert full-stack development agent.
       
       We are processing a user command: "${userPrompt}".
+      ${attachment ? `The user also uploaded an attachment named "${attachment.name}" of type "${attachment.type}". Please design tasks and code structure to process/integrate this file appropriately.` : ""}
       
       CRITICAL INSTRUCTIONS FOR SIMPLE SYSTEM/FILE-SYSTEM COMMANDS:
       - If the user request is a simple command (e.g., "Create a folder", "mkdir", "npm install", "delete a file", "run test", "create directory"), do NOT plan complex React components, frontend layouts, button features, or modal UIs.
       - Instead, plan a single execution-focused task containing only the exact system/file-system steps required to perform the action directly. E.g., for "Create a folder", plan exactly 1 task called "Execute folder creation" containing 1 or 2 straightforward subtasks like "Create target directory" and "Verify directory existence".
       - If and only if the user explicitly asks to build an interactive feature or a full application (e.g., "build a todo list", "create a login page feature"), you should break down the request into exactly 3 key developmental tasks.
       
-      Analyze the request carefully and output the appropriate task structure.`,
+      Analyze the request carefully and output the appropriate task structure.`;
+
+    const contents: any = attachment ? [
+      {
+        inlineData: {
+          mimeType: attachment.type,
+          data: attachment.data,
+        }
+      },
+      {
+        text: promptText
+      }
+    ] : promptText;
+
+    const response = await ai.models.generateContent({
+      model: "gemini-3.5-flash",
+      contents,
       config: {
         responseMimeType: "application/json",
         responseSchema: {
@@ -372,7 +387,7 @@ function generateActionStepsForSubtask(subtaskName: string, prompt: string, sIdx
 
 // Background builder that executes subtasks sequentially
 // and writes real-time logs and generated files!
-export async function executeAgentBuild(prompt: string, tasks: Task[], env?: Partial<AppEnv>) {
+export async function executeAgentBuild(prompt: string, tasks: Task[], env?: Partial<AppEnv>, attachment?: any) {
   const startTime = Date.now();
   console.log(`Starting execution for prompt: ${prompt}`);
   activeCancellationSignal = { aborted: false, taskId: "" };
@@ -531,7 +546,17 @@ export async function executeAgentBuild(prompt: string, tasks: Task[], env?: Par
 
             const fileRes = await ai.models.generateContent({
               model: "gemini-3.5-flash",
-              contents: filePrompt,
+              contents: attachment ? [
+                {
+                  inlineData: {
+                    mimeType: attachment.type,
+                    data: attachment.data,
+                  }
+                },
+                {
+                  text: `${filePrompt}\n\nThe user also uploaded an attachment named "${attachment.name}" of type "${attachment.type}". Please use/incorporate its contents, data structures, or design layout in your synthesized code.`
+                }
+              ] : filePrompt,
             });
 
             let fileContent = fileRes.text || "// AI Synthesis yielded empty code file.";

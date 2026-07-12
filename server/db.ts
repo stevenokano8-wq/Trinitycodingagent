@@ -26,7 +26,8 @@ const SCHEMA_STATEMENTS = [
     actions_taken TEXT,
     thought_time_seconds REAL,
     model_name TEXT,
-    duration_seconds REAL
+    duration_seconds REAL,
+    attachment TEXT
   )`,
   `CREATE TABLE IF NOT EXISTS tasks (
     id TEXT PRIMARY KEY,
@@ -71,6 +72,12 @@ export async function initDb(env?: Partial<AppEnv>): Promise<DatabaseStatus> {
     for (const statement of SCHEMA_STATEMENTS) {
       await db.prepare(statement).run();
     }
+    // Safely migrate existing databases to add attachment column
+    try {
+      await db.prepare("ALTER TABLE messages ADD COLUMN attachment TEXT").run();
+    } catch (_) {
+      // Column already exists or table doesn't exist yet, ignore
+    }
     useLocalMemory = false;
     console.log("Successfully connected to Cloudflare D1!");
     return { d1: "connected", kv: "local_fallback" };
@@ -98,6 +105,7 @@ export async function getMessages(): Promise<Message[]> {
       thoughtTimeSeconds: row.thought_time_seconds ?? undefined,
       modelName: row.model_name || undefined,
       durationSeconds: row.duration_seconds ?? undefined,
+      attachment: row.attachment ? JSON.parse(row.attachment) : undefined,
     }));
   } catch (err) {
     console.error("Failed to query messages from D1:", err);
@@ -113,7 +121,7 @@ export async function addMessage(msg: Message): Promise<void> {
   try {
     await db
       .prepare(
-        "INSERT INTO messages (id, role, content, timestamp, task_id, actions_taken, thought_time_seconds, model_name, duration_seconds) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        "INSERT INTO messages (id, role, content, timestamp, task_id, actions_taken, thought_time_seconds, model_name, duration_seconds, attachment) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
       )
       .bind(
         msg.id,
@@ -124,7 +132,8 @@ export async function addMessage(msg: Message): Promise<void> {
         msg.actionsTaken ? JSON.stringify(msg.actionsTaken) : null,
         msg.thoughtTimeSeconds !== undefined ? msg.thoughtTimeSeconds : null,
         msg.modelName || null,
-        msg.durationSeconds !== undefined ? msg.durationSeconds : null
+        msg.durationSeconds !== undefined ? msg.durationSeconds : null,
+        msg.attachment ? JSON.stringify(msg.attachment) : null
       )
       .run();
   } catch (err) {

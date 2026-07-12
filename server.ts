@@ -51,7 +51,7 @@ app.get("/api/messages", async (req, res) => {
 // API: Add user message & trigger Sovereign Agent
 app.post("/api/messages", async (req, res) => {
   try {
-    const { role, content } = req.body;
+    const { role, content, attachment } = req.body;
     if (!content) {
       return res.status(400).json({ error: "Content is required" });
     }
@@ -61,6 +61,7 @@ app.post("/api/messages", async (req, res) => {
       role: role || "user",
       content,
       timestamp: new Date().toISOString(),
+      attachment,
     };
 
     // Save user message to database
@@ -70,7 +71,7 @@ app.post("/api/messages", async (req, res) => {
     if (userMsg.role === "user") {
       try {
         // Step 1: Generate Tasks and Subtasks list with Gemini (with fallback)
-        const plannedTasks = await planBuildTasks(content);
+        const plannedTasks = await planBuildTasks(content, undefined, attachment);
         
         // Save initial tasks to SQL relational store
         for (const task of plannedTasks) {
@@ -84,7 +85,7 @@ app.post("/api/messages", async (req, res) => {
         // Trigger background asynchronous compilation/synthesis worker
         // (Node stays alive between requests, so no waitUntil is needed here —
         // that's only required in the Workers entry, server/worker.ts)
-        executeAgentBuild(content, plannedTasks);
+        executeAgentBuild(content, plannedTasks, undefined, attachment);
 
         res.json({ message: userMsg, tasks: plannedTasks });
       } catch (agentErr: any) {

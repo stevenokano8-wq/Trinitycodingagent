@@ -23,7 +23,8 @@ import {
   Shield,
   Clock,
   Loader2,
-  Sparkles
+  Sparkles,
+  X
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { Message, Task, FileNode, DatabaseStatus } from "./types.js";
@@ -253,6 +254,34 @@ export default function App() {
     elapsed: number;
     isThinking: boolean;
   } | null>(null);
+
+  const [attachment, setAttachment] = useState<{
+    name: string;
+    type: string;
+    data: string; // base64 string
+    size: number;
+  } | null>(null);
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result as string;
+      const base64Data = result.split(",")[1] || result;
+      setAttachment({
+        name: file.name,
+        type: file.type,
+        data: base64Data,
+        size: file.size
+      });
+    };
+    reader.readAsDataURL(file);
+    e.target.value = "";
+  };
 
   // System States
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
@@ -612,6 +641,8 @@ export default function App() {
     if (!inputText.trim() || isSending) return;
 
     const userText = inputText;
+    const currentAttachment = attachment;
+    setAttachment(null);
     setInputText("");
     setIsSending(true);
 
@@ -620,7 +651,8 @@ export default function App() {
       id: `msg-optim-${Date.now()}`,
       role: "user",
       content: userText,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
+      attachment: currentAttachment || undefined
     };
     setMessages(prev => [...prev, optimMsg]);
 
@@ -628,7 +660,7 @@ export default function App() {
       const res = await fetch(`${API_BASE}/api/messages`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ role: "user", content: userText }),
+        body: JSON.stringify({ role: "user", content: userText, attachment: currentAttachment }),
       });
 
       if (!res.ok) {
@@ -846,7 +878,13 @@ export default function App() {
 
   return (
     <div className="h-screen max-h-screen h-[100dvh] max-h-[100dvh] bg-slate-50 flex flex-col font-sans select-none overflow-hidden antialiased">
-      
+      <input 
+        type="file" 
+        ref={fileInputRef} 
+        onChange={handleFileChange} 
+        className="hidden" 
+        accept="image/*,.txt,.pdf,.doc,.docx,.json,.js,.ts,.tsx,.css,.html" 
+      />
       {/* Top Banner Bar - matching screenshot exactly! */}
       <header className="bg-white border-b border-gray-100 px-3 sm:px-6 py-2.5 sm:py-4 flex items-center justify-between sticky top-0 z-40 shadow-xs gap-2">
         
@@ -1020,16 +1058,44 @@ export default function App() {
                   <div className="w-full shrink-0 z-30">
                     <form 
                       onSubmit={handleSendPrompt}
-                      className="w-full max-w-3xl mx-auto bg-white rounded-3xl px-5 py-3 shadow-md hover:shadow-lg transition-all border border-gray-150 flex items-end gap-3"
+                      className="w-full max-w-3xl mx-auto bg-white rounded-3xl px-5 py-3 shadow-md hover:shadow-lg transition-all border border-gray-150 flex flex-col gap-2"
                     >
-                      <button 
-                        id="btn-input-plus"
-                        type="button" 
-                        onClick={() => { alert("Uploading file/attachment triggers coming soon in workspace..."); }}
-                        className="p-1.5 hover:bg-gray-100 rounded-full text-gray-400 hover:text-gray-700 transition-colors mb-1"
-                      >
-                        <Plus className="h-5 w-5" />
-                      </button>
+                      {attachment && (
+                        <div className="w-full flex items-center gap-2 mb-1 bg-slate-50 border border-slate-100 p-2 rounded-2xl text-left">
+                          {attachment.type.startsWith("image/") ? (
+                            <img
+                              src={`data:${attachment.type};base64,${attachment.data}`}
+                              alt={attachment.name}
+                              className="h-10 w-10 object-cover rounded-lg border border-gray-200"
+                              referrerPolicy="no-referrer"
+                            />
+                          ) : (
+                            <div className="h-10 w-10 bg-indigo-50 border border-indigo-150 rounded-lg flex items-center justify-center text-indigo-500 font-mono text-xs font-bold shrink-0">
+                              FILE
+                            </div>
+                          )}
+                          <div className="flex-1 min-w-0">
+                            <p className="text-xs font-medium text-gray-700 truncate">{attachment.name}</p>
+                            <p className="text-[10px] text-gray-400">{(attachment.size / 1024).toFixed(1)} KB</p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setAttachment(null)}
+                            className="p-1 hover:bg-gray-200 rounded-full text-gray-400 hover:text-gray-600 transition-colors"
+                          >
+                            <X className="h-4 w-4" />
+                          </button>
+                        </div>
+                      )}
+                      <div className="w-full flex items-end gap-3">
+                        <button 
+                          id="btn-input-plus"
+                          type="button" 
+                          onClick={() => fileInputRef.current?.click()}
+                          className="p-1.5 hover:bg-gray-100 rounded-full text-gray-400 hover:text-gray-700 transition-colors mb-1 shrink-0"
+                        >
+                          <Plus className="h-5 w-5" />
+                        </button>
 
                       <textarea
                         id="input-prompt-command"
@@ -1062,6 +1128,7 @@ export default function App() {
                       >
                         {isSending ? <Loader2 className="h-4.5 w-4.5 animate-spin text-white" /> : <Send className="h-4.5 w-4.5 text-white" />}
                       </button>
+                      </div>
                     </form>
 
                     {/* Suggestions list */}
@@ -1151,8 +1218,28 @@ export default function App() {
                         if (msg.role === "user") {
                           return (
                             <div key={item.id} className="flex flex-col items-end w-full">
-                              <div className="bg-[#e3edfa] text-slate-800 rounded-3xl rounded-tr-none px-6 py-4 max-w-[85%] shadow-xs leading-relaxed text-sm">
-                                {msg.content}
+                              <div className="bg-[#e3edfa] text-slate-800 rounded-3xl rounded-tr-none px-6 py-4 max-w-[85%] shadow-xs leading-relaxed text-sm text-left">
+                                {msg.attachment && (
+                                  <div className="bg-white/80 p-2.5 rounded-xl border border-slate-200/40 flex items-center gap-2.5 max-w-sm mb-2.5 text-left self-start">
+                                    {msg.attachment.type.startsWith("image/") ? (
+                                      <img 
+                                        src={`data:${msg.attachment.type};base64,${msg.attachment.data}`} 
+                                        alt={msg.attachment.name} 
+                                        className="h-12 w-12 object-cover rounded-lg border border-gray-200 shrink-0" 
+                                        referrerPolicy="no-referrer"
+                                      />
+                                    ) : (
+                                      <div className="h-12 w-12 bg-indigo-50 border border-indigo-150 rounded-lg flex items-center justify-center text-indigo-500 font-mono text-[10px] font-bold shrink-0">
+                                        FILE
+                                      </div>
+                                    )}
+                                    <div className="flex-1 min-w-0">
+                                      <p className="text-xs font-semibold text-slate-700 truncate">{msg.attachment.name}</p>
+                                      <p className="text-[10px] text-slate-400">{(msg.attachment.size / 1024).toFixed(1)} KB</p>
+                                    </div>
+                                  </div>
+                                )}
+                                <div className="whitespace-pre-wrap">{msg.content}</div>
                               </div>
                               <span className="text-[10px] text-gray-400 mt-1.5 px-2 font-mono">
                                 User • {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
@@ -1317,16 +1404,44 @@ export default function App() {
                   <div className="w-full bg-slate-50/90 pt-3 pb-1 border-t border-gray-150/50 z-30 shrink-0">
                     <form 
                       onSubmit={handleSendPrompt}
-                      className="w-full max-w-3xl mx-auto bg-white rounded-3xl px-5 py-3 shadow-md hover:shadow-lg transition-all border border-gray-150 flex items-end gap-3"
+                      className="w-full max-w-3xl mx-auto bg-white rounded-3xl px-5 py-3 shadow-md hover:shadow-lg transition-all border border-gray-150 flex flex-col gap-2"
                     >
-                      <button 
-                        id="btn-input-plus"
-                        type="button" 
-                        onClick={() => { alert("Uploading file/attachment triggers coming soon in workspace..."); }}
-                        className="p-1.5 hover:bg-gray-100 rounded-full text-gray-400 hover:text-gray-700 transition-colors mb-1"
-                      >
-                        <Plus className="h-5 w-5" />
-                      </button>
+                      {attachment && (
+                        <div className="w-full flex items-center gap-2 mb-1 bg-slate-50 border border-slate-100 p-2 rounded-2xl text-left">
+                          {attachment.type.startsWith("image/") ? (
+                            <img
+                              src={`data:${attachment.type};base64,${attachment.data}`}
+                              alt={attachment.name}
+                              className="h-10 w-10 object-cover rounded-lg border border-gray-200"
+                              referrerPolicy="no-referrer"
+                            />
+                          ) : (
+                            <div className="h-10 w-10 bg-indigo-50 border border-indigo-150 rounded-lg flex items-center justify-center text-indigo-500 font-mono text-xs font-bold shrink-0">
+                              FILE
+                            </div>
+                          )}
+                          <div className="flex-1 min-w-0">
+                            <p className="text-xs font-medium text-gray-700 truncate">{attachment.name}</p>
+                            <p className="text-[10px] text-gray-400">{(attachment.size / 1024).toFixed(1)} KB</p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setAttachment(null)}
+                            className="p-1 hover:bg-gray-200 rounded-full text-gray-400 hover:text-gray-600 transition-colors"
+                          >
+                            <X className="h-4 w-4" />
+                          </button>
+                        </div>
+                      )}
+                      <div className="w-full flex items-end gap-3">
+                        <button 
+                          id="btn-input-plus"
+                          type="button" 
+                          onClick={() => fileInputRef.current?.click()}
+                          className="p-1.5 hover:bg-gray-100 rounded-full text-gray-400 hover:text-gray-700 transition-colors mb-1 shrink-0"
+                        >
+                          <Plus className="h-5 w-5" />
+                        </button>
                       <textarea
                         id="input-prompt-command"
                         placeholder="Command the Titan-Lobe..."
@@ -1357,6 +1472,7 @@ export default function App() {
                       >
                         {isSending ? <Loader2 className="h-4.5 w-4.5 animate-spin text-white" /> : <Send className="h-4.5 w-4.5 text-white" />}
                       </button>
+                      </div>
                     </form>
                   </div>
                 </div>
@@ -1686,18 +1802,39 @@ export default function App() {
                 </div>
 
                 <div className="space-y-3">
-                  <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wider font-mono">Connections</h4>
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between text-xs font-medium text-gray-600 p-2 border-b border-gray-50">
-                      <span>Cloudflare D1</span>
-                      <span className={`px-2 py-0.5 rounded font-mono font-bold ${dbStatus.d1 === "connected" ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>
+                  <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wider font-mono">Active Integrations</h4>
+                  <div className="space-y-2 bg-slate-50 p-3 rounded-2xl border border-gray-100">
+                    <div className="flex items-center justify-between text-xs font-medium text-gray-600 pb-2 border-b border-gray-100">
+                      <span className="flex items-center gap-1.5">
+                        <span className="h-1.5 w-1.5 bg-emerald-500 rounded-full animate-pulse" />
+                        <span>GitHub Sync</span>
+                      </span>
+                      <span className="px-2 py-0.5 rounded font-mono font-bold text-[10px] bg-indigo-50 text-indigo-700">
+                        sovereign-agent-api
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between text-xs font-medium text-gray-600 pb-2 border-b border-gray-100">
+                      <span>Cloudflare D1 DB</span>
+                      <span className={`px-2 py-0.5 rounded font-mono font-bold text-[10px] ${dbStatus.d1 === "connected" || dbStatus.d1 === "local_fallback" ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>
                         {dbStatus.d1}
                       </span>
                     </div>
-                    <div className="flex items-center justify-between text-xs font-medium text-gray-600 p-2">
+                    <div className="flex items-center justify-between text-xs font-medium text-gray-600 pb-2 border-b border-gray-100">
                       <span>Workers KV Cache</span>
-                      <span className={`px-2 py-0.5 rounded font-mono font-bold ${dbStatus.kv === "connected" ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>
+                      <span className={`px-2 py-0.5 rounded font-mono font-bold text-[10px] ${dbStatus.kv === "connected" || dbStatus.kv === "local_fallback" ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>
                         {dbStatus.kv}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between text-xs font-medium text-gray-600 pb-2 border-b border-gray-100">
+                      <span>Core LLM Engine</span>
+                      <span className="px-2 py-0.5 rounded font-mono font-bold text-[10px] bg-purple-50 text-purple-700">
+                        Gemini 3.5 Flash
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between text-xs font-medium text-gray-600">
+                      <span>SSE Feed</span>
+                      <span className={`px-2 py-0.5 rounded font-mono font-bold text-[10px] ${isConnectedSSE ? "bg-emerald-50 text-emerald-700" : "bg-red-50 text-red-700"}`}>
+                        {isConnectedSSE ? "Online" : "Offline"}
                       </span>
                     </div>
                   </div>

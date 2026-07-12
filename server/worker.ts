@@ -56,7 +56,7 @@ app.post("/api/messages", async (c) => {
   await ensureInit(c.env);
   try {
     const body = await c.req.json();
-    const { role, content } = body;
+    const { role, content, attachment } = body;
     if (!content) return c.json({ error: "Content is required" }, 400);
 
     const userMsg: Message = {
@@ -64,13 +64,14 @@ app.post("/api/messages", async (c) => {
       role: role || "user",
       content,
       timestamp: new Date().toISOString(),
+      attachment,
     };
 
     await addMessage(userMsg);
 
     if (userMsg.role === "user") {
       try {
-        const plannedTasks = await planBuildTasks(content, c.env);
+        const plannedTasks = await planBuildTasks(content, c.env, attachment);
         for (const task of plannedTasks) {
           if (!userMsg.taskId) userMsg.taskId = task.id;
           await saveTask(task);
@@ -79,7 +80,7 @@ app.post("/api/messages", async (c) => {
         // Long-running background build: must be kept alive with waitUntil,
         // otherwise the Worker would tear down the request context as soon
         // as this handler returns its response.
-        c.executionCtx.waitUntil(executeAgentBuild(content, plannedTasks, c.env));
+        c.executionCtx.waitUntil(executeAgentBuild(content, plannedTasks, c.env, attachment));
 
         return c.json({ message: userMsg, tasks: plannedTasks });
       } catch (agentErr: any) {

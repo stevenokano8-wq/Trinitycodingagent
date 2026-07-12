@@ -26,7 +26,6 @@ id = "b3301c5ec88a409d964b4303e880618b"
 # dashboard — never committed here.
 
 [[migrations]]
-tag = "v2_delete_project_tools"
+tag = "v3_delete_legacy_durable_objects"
 new_classes = []
-deleted_classes = ["ProjectTools"]
-
+deleted_classes = ["ProjectTools", "AgentSession"]

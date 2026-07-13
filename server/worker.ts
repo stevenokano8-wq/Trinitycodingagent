@@ -366,17 +366,24 @@ app.get("/api/tasks/stream", (c) => {
     client.write(`:\n\n`);
   }, 15000);
 
+  // Keep the isolate alive for the full duration of this SSE connection.
+  // The async IIFE above returns immediately (just registers a listener),
+  // so we use a proper Promise that only resolves on abort — otherwise
+  // Cloudflare can recycle the isolate mid-stream.
   c.executionCtx.waitUntil(
-    (async () => {
-      // Keep this waitUntil alive roughly as long as the stream itself; the
-      // client is removed and the interval cleared once writes start failing
-      // (handled inside client.write above) or on abort.
-      c.req.raw.signal?.addEventListener("abort", () => {
+    new Promise<void>((resolve) => {
+      const cleanup = () => {
         clearInterval(heartbeat);
         sseClients.delete(client);
         writer.close().catch(() => {});
-      });
-    })()
+        resolve();
+      };
+      if (c.req.raw.signal) {
+        c.req.raw.signal.addEventListener("abort", cleanup, { once: true });
+      }
+      // Safety valve: resolve after 10 minutes max so the waitUntil never leaks.
+      setTimeout(cleanup, 10 * 60 * 1000);
+    })
   );
 
   return new Response(readable, {

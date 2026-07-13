@@ -21,6 +21,11 @@ database_id = "0961b84e-c89a-43af-96ef-022089e8448e"
 binding = "CACHE_KV"
 id = "b3301c5ec88a409d964b4303e880618b"
 
+# Cloudflare Workers AI binding — handles task planning / division of labor.
+# Gemini handles code synthesis; CF AI handles lightweight planning.
+[ai]
+binding = "AI"
+
 # Secrets (GEMINI_API_KEY, GITHUB_TOKEN, GITHUB_REPO_URL) are set via
 # `wrangler secret put <NAME> --config wrangler.api.toml` or the Cloudflare
 # dashboard -- never committed here.

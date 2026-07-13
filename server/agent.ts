@@ -3,7 +3,7 @@ import { Task, Subtask, FileNode, Message } from "../src/types.js";
 import { saveTask, saveFile, addMessage, getTasks, getFiles } from "./db.js";
 import { cacheSet, cacheGet } from "./cache.js";
 import { executeGitPush } from "./github.js";
-import { AppEnv, resolveEnvWithOverrides } from "./env.js";
+import { AppEnv, resolveEnvWithOverrides, AiBinding } from "./env.js";
 
 let aiClient: GoogleGenAI | null = null;
 let aiClientKey: string | null = null;
@@ -43,11 +43,73 @@ export function broadcastSSE(event: string, data: any) {
   }
 }
 
+// ------------------------------------------------------------------
+// DIVISION OF LABOR: CF Workers AI handles planning (fast, no quota).
+// Gemini handles code synthesis only.
+// ------------------------------------------------------------------
+async function planWithCFWorkersAI(ai: AiBinding, userPrompt: string): Promise<Task[] | null> {
+  try {
+    const systemPrompt = `You are a precise software task planner. Return ONLY valid JSON — no markdown, no prose, no code fences.
+Exact shape: {"tasks":[{"name":"Task title","subtasks":["step description"]}]}
+
+Planning rules:
+- Simple command (mkdir, create folder, npm install, delete file, run test): 1 task, 1-2 subtasks. Keep it minimal — no React, no UI code.
+- Full app or feature build: 2-3 tasks, 2-3 subtasks each.
+- Every subtask is a plain English sentence describing one concrete action.`;
+
+    const resp = await ai.run("@cf/meta/llama-3.3-70b-instruct-fp8-fast", {
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: `Create a task plan for: "${userPrompt}"` }
+      ],
+      max_tokens: 900
+    });
+
+    const raw = (resp.response || "").trim();
+    const jsonMatch = raw.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) return null;
+    const parsed = JSON.parse(jsonMatch[0]);
+    if (!parsed?.tasks || !Array.isArray(parsed.tasks) || parsed.tasks.length === 0) return null;
+
+    return (parsed.tasks as any[]).map((t: any, idx: number) => {
+      const taskId = `task-${Date.now()}-${idx}`;
+      return {
+        id: taskId,
+        name: t.name || `Task ${idx + 1}`,
+        status: "pending" as const,
+        progress: 0,
+        activeSubtaskIndex: 0,
+        createdAt: new Date().toISOString(),
+        subtasks: (Array.isArray(t.subtasks) ? t.subtasks : []).map((sub: string, subIdx: number) => ({
+          id: `${taskId}-sub-${subIdx}`,
+          taskId,
+          name: typeof sub === "string" ? sub : `Step ${subIdx + 1}`,
+          status: "pending" as const,
+          logs: ["Initialized subtask. Waiting for agent process allocation..."]
+        }))
+      };
+    });
+  } catch (err: any) {
+    console.error("CF Workers AI planning failed, falling back to Gemini:", err.message);
+    return null;
+  }
+}
+
 // Generates tasks and subtasks structure based on a user prompt
 export async function planBuildTasks(userPrompt: string, env?: Partial<AppEnv>, attachment?: any): Promise<Task[]> {
+  // Division of labor: try CF Workers AI first (fast, zero quota cost).
+  if (env?.AI && !attachment) {
+    const cfTasks = await planWithCFWorkersAI(env.AI, userPrompt);
+    if (cfTasks && cfTasks.length > 0) {
+      console.log(`Task planning delegated to Cloudflare Workers AI (${cfTasks.length} tasks created).`);
+      return cfTasks;
+    }
+  }
+
+  // Fall through to Gemini if CF AI is unavailable (local dev, no binding) or returns invalid JSON.
   try {
     const ai = getGeminiClient(env);
-    console.log("Planning build tasks using Gemini...");
+    console.log("Planning build tasks using Gemini (primary / fallback)...");
 
     const promptText = `You are Sovereign Agent, a highly execution-focused, expert full-stack development agent.
       

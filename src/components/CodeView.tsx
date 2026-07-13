@@ -7,6 +7,17 @@ interface CodeViewProps {
   onUpdateFile: (path: string, newContent: string) => void;
 }
 
+function buildFileTree(files: FileNode[]): Record<string, FileNode[]> {
+  const tree: Record<string, FileNode[]> = {};
+  for (const file of files) {
+    const parts = file.path.split("/");
+    const folder = parts.length > 1 ? parts.slice(0, -1).join("/") : "(root)";
+    if (!tree[folder]) tree[folder] = [];
+    tree[folder].push(file);
+  }
+  return tree;
+}
+
 export default function CodeView({ files, onUpdateFile }: CodeViewProps) {
   const [selectedFilePath, setSelectedFilePath] = useState<string | null>(
     files.length > 0 ? files[0].path : null
@@ -79,36 +90,40 @@ export default function CodeView({ files, onUpdateFile }: CodeViewProps) {
         {files.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-10 text-center px-4">
             <Folder className="h-8 w-8 text-gray-300 stroke-1 mb-2" />
-            <p className="text-[11px] text-gray-400 font-mono">No synthesized code files found in local storage yet.</p>
+            <p className="text-[11px] text-gray-400 font-mono">No synthesized files yet. Run a build to generate code.</p>
           </div>
         ) : (
           <div className="space-y-1 overflow-y-auto flex-1 max-h-[300px] md:max-h-none">
-            <div className="flex items-center gap-1.5 px-2 py-1 text-[11px] font-bold text-gray-400 uppercase font-mono mb-1">
-              <Folder className="h-3.5 w-3.5" /> src/generated
-            </div>
-            
-            {files.map(file => {
-              const isActive = file.path === selectedFilePath || (!selectedFilePath && file.path === files[0].path);
-              const displayName = file.path.replace("src/generated/", "");
-              return (
-                <button
-                  id={`file-node-${file.path.replace(/[^a-z0-9]/g, "-")}`}
-                  key={file.path}
-                  onClick={() => {
-                    setSelectedFilePath(file.path);
-                    setMobileView("editor"); // Auto flip to editor on mobile click
-                  }}
-                  className={`w-full flex items-center gap-2 px-3 py-2 rounded-xl text-left text-xs font-mono transition-all ${
-                    isActive 
-                      ? "bg-gray-900 text-white font-semibold shadow-xs" 
-                      : "text-gray-600 hover:bg-gray-100 hover:text-gray-900"
-                  }`}
-                >
-                  <FileText className={`h-4 w-4 ${isActive ? "text-amber-400" : "text-gray-400"}`} />
-                  <span className="truncate">{displayName}</span>
-                </button>
-              );
-            })}
+            {Object.entries(buildFileTree(files)).map(([folder, folderFiles]) => (
+              <div key={folder}>
+                <div className="flex items-center gap-1.5 px-2 py-1 text-[10px] font-bold text-gray-400 uppercase font-mono mt-2 mb-0.5 select-none">
+                  <Folder className="h-3 w-3 text-amber-400" />
+                  <span className="truncate">{folder}</span>
+                </div>
+                {folderFiles.map(file => {
+                  const isActive = file.path === selectedFilePath || (!selectedFilePath && file.path === files[0].path);
+                  const fileName = file.path.split("/").pop() || file.path;
+                  return (
+                    <button
+                      id={`file-node-${file.path.replace(/[^a-z0-9]/g, "-")}`}
+                      key={file.path}
+                      onClick={() => {
+                        setSelectedFilePath(file.path);
+                        setMobileView("editor");
+                      }}
+                      className={`w-full flex items-center gap-2 px-3 py-2 rounded-xl text-left text-xs font-mono transition-all ${
+                        isActive
+                          ? "bg-gray-900 text-white font-semibold shadow-xs"
+                          : "text-gray-600 hover:bg-gray-100 hover:text-gray-900"
+                      }`}
+                    >
+                      <FileText className={`h-3.5 w-3.5 shrink-0 ${isActive ? "text-amber-400" : "text-gray-400"}`} />
+                      <span className="truncate">{fileName}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            ))}
           </div>
         )}
       </div>

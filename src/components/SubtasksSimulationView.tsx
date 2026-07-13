@@ -152,6 +152,53 @@ const CompilerSubtaskRow = React.memo(function CompilerSubtaskRow({
   );
 });
 
+// Collapsible Phase Summary inside simulated task accordions
+const SimulationPhaseSummary = React.memo(function SimulationPhaseSummary({ 
+  tIdx, 
+  taskName 
+}: { 
+  tIdx: number; 
+  taskName: string;
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+  return (
+    <div className="p-2.5 border border-emerald-200 bg-emerald-50/10 rounded-xl shadow-3xs mt-2.5 text-left transition-all duration-300">
+      <button
+        type="button"
+        onClick={() => setIsOpen(!isOpen)}
+        className="w-full flex items-center justify-between font-sans text-[11px] text-emerald-800 hover:text-emerald-950 font-semibold cursor-pointer border-none bg-transparent p-1"
+      >
+        <span className="flex items-center gap-1.5">
+          <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+          <span>Summary of Phase {tIdx + 1}</span>
+        </span>
+        <div className="flex items-center gap-1 select-none text-[8px] font-mono font-bold text-emerald-600 bg-emerald-100 px-1.5 py-0.5 rounded">
+          <span>{isOpen ? "HIDE" : "SHOW"}</span>
+        </div>
+      </button>
+      <AnimatePresence initial={false}>
+        {isOpen && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            className="overflow-hidden"
+          >
+            <div className="mt-2 text-[10px] text-slate-650 space-y-1 pl-5 border-t border-emerald-100/50 pt-2 font-sans leading-relaxed">
+              <p className="font-semibold text-emerald-900">✨ Phase {tIdx + 1} ("{taskName}") successfully executed and verified!</p>
+              <ul className="list-disc pl-4 space-y-0.5 text-slate-500">
+                <li>Synthesized modules successfully integrated.</li>
+                <li>Zero compiler errors or runtime warnings reported.</li>
+                <li>Visual assets and state layers updated live.</li>
+              </ul>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+});
+
 // Memoized Compiler Task Accordion Row
 const CompilerTaskRow = React.memo(function CompilerTaskRow({ 
   task, 
@@ -210,6 +257,10 @@ const CompilerTaskRow = React.memo(function CompilerTaskRow({
             {task.subtasks.map((sub, sIdx) => (
               <CompilerSubtaskRow key={sub.id} sub={sub} sIdx={sIdx} />
             ))}
+            
+            {task.status === "completed" && (
+              <SimulationPhaseSummary tIdx={tIdx} taskName={task.name} />
+            )}
           </motion.div>
         )}
       </AnimatePresence>
@@ -226,6 +277,9 @@ export default function SubtasksSimulationView() {
   
   // Real-time states
   const [eventLogs, setEventLogs] = useState<LogMessage[]>([]);
+  const [isThinkingActive, setIsThinkingActive] = useState(false);
+  const [thinkingSteps, setThinkingSteps] = useState<string[]>([]);
+  const [isMasterPlanOpen, setIsMasterPlanOpen] = useState(false);
   const [simulatedTasks, setSimulatedTasks] = useState<SimulatedTask[]>([]);
   const [visibleFiles, setVisibleFiles] = useState<{ path: string; type: "folder" | "file" }[]>([
     { path: "src/App.tsx", type: "file" },
@@ -502,22 +556,33 @@ export default function SubtasksSimulationView() {
     }));
 
     setSimulatedTasks(initialTasks);
+    setIsThinkingActive(true);
+    setThinkingSteps([]);
+    setIsMasterPlanOpen(false);
 
-    // --- PHASE 1: PRE-ANALYSIS ---
+    // --- STEP 1: COGNITIVE THINKING PHASE ---
     appendLog("event", `[FRONTEND] User dispatched task command: "${promptValue}"`);
-    await sleep(600);
-    appendLog("system", `[PHASE 1] Instantly broadcasted event: "analysis_started"`);
-    await sleep(800);
-    appendLog("llama", `[PHASE 1] Sovereign Llama 3.3-70B processing user request rules...`);
-    await sleep(1000);
-    appendLog("llama", `[PHASE 1] Validating architectural security boundaries & constraints.`);
-    await sleep(900);
-    appendLog("system", `[PHASE 1] Resolved roadmap JSON array response.`);
+    await sleep(400);
+    setThinkingSteps(p => [...p, "Analyzing user intent and parsing functional constraints..."]);
+    appendLog("system", `[THINKING] Instantly broadcasted event: "analysis_started"`);
+    await sleep(650);
+    setThinkingSteps(p => [...p, "Designing modular, type-safe structures matching the guidelines..."]);
+    appendLog("llama", `[THINKING] Sovereign Llama 3.3-70B processing user request rules...`);
+    await sleep(650);
+    setThinkingSteps(p => [...p, "Verifying Cloudflare edge resource mappings (D1 tables and KV caching pools)..."]);
+    appendLog("llama", `[THINKING] Validating architectural security boundaries & constraints.`);
+    await sleep(650);
+    setThinkingSteps(p => [...p, "Synthesizing step-by-step sequential Phase Roadmap..."]);
+    appendLog("system", `[THINKING] Resolved roadmap JSON array response.`);
+    await sleep(400);
+    setIsThinkingActive(false);
+
+    // --- STEP 2: MASTER PLAN GENERATED ---
     appendLog("event", `[PHASE 1] Instantly broadcasted event: "roadmap_ready"`);
     
     // Auto-update tasks list to empty rows in UI
     setCurrentPhase("phase2");
-    appendLog("success", `[FRONTEND] Empty accordion layout panels rendered in Task Compiler container.`);
+    appendLog("success", `[FRONTEND] Collapsible Master Plan & task accordion panels rendered in Task Compiler container.`);
     await sleep(800);
 
     // --- PHASE 2: STREAMING LOOP ---
@@ -769,9 +834,82 @@ export default function SubtasksSimulationView() {
             <span className="text-[9px] font-mono text-amber-600 bg-amber-50 px-2 py-0.5 rounded-md font-bold uppercase">Phase 2 Loop</span>
           </div>
 
-          <div className="flex-1 overflow-y-auto space-y-3 pr-1">
+          <div className="flex-1 overflow-y-auto space-y-3.5 pr-1 text-left">
+            {/* Real-time Progressive Thinking Phase visualization */}
+            {thinkingSteps.length > 0 && (
+              <div className={`p-4 rounded-2xl border transition-all duration-300 ${
+                isThinkingActive 
+                  ? "bg-purple-50/40 border-purple-200/60 shadow-inner" 
+                  : "bg-slate-50/50 border-slate-150"
+              }`}>
+                <div className="flex items-center justify-between border-b border-purple-100/30 pb-2 mb-2.5">
+                  <span className="text-[9px] font-mono font-bold tracking-wider uppercase text-purple-600 flex items-center gap-1.5">
+                    <Cpu className={`h-3.5 w-3.5 text-purple-500 ${isThinkingActive ? "animate-spin" : ""}`} />
+                    Step 1: Cognitive Thinking Phase
+                  </span>
+                  {isThinkingActive ? (
+                    <span className="text-[8px] font-mono font-bold text-purple-500 animate-pulse bg-purple-100 px-1.5 py-0.5 rounded">
+                      THINKING...
+                    </span>
+                  ) : (
+                    <span className="text-[8px] font-mono font-bold text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded">
+                      RESOLVED
+                    </span>
+                  )}
+                </div>
+                
+                <div className="space-y-1.5 text-[10.5px] font-mono text-slate-650 leading-relaxed pl-1">
+                  {thinkingSteps.map((step, idx) => (
+                    <div key={idx} className="flex items-start gap-2">
+                      <span className="text-purple-400 shrink-0 select-none">💭</span>
+                      <span>{step}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Simulated Master Plan Accordion (CLOSED BY DEFAULT) */}
+            {simulatedTasks.length > 0 && !isThinkingActive && (
+              <div className="border border-slate-150 bg-slate-50/40 rounded-2xl overflow-hidden transition-all duration-300">
+                <button
+                  type="button"
+                  onClick={() => setIsMasterPlanOpen(!isMasterPlanOpen)}
+                  className="w-full flex items-center justify-between p-3.5 bg-white hover:bg-slate-50 transition-colors text-left border-none cursor-pointer"
+                >
+                  <div className="flex items-center gap-2 text-slate-700 min-w-0 flex-1 font-sans">
+                    <span className="text-sm shrink-0">📋</span>
+                    <div className="flex flex-col min-w-0 flex-1">
+                      <span className="text-[11px] font-bold text-slate-800 uppercase tracking-tight">
+                        Step 2: Master Plan Strategy
+                      </span>
+                      <span className="text-[9px] text-slate-400 font-mono mt-0.5">
+                        {isMasterPlanOpen ? "Overarching strategy and phases:" : "(Collapsible • Closed by Default)"}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <span className="text-[8px] font-mono font-bold text-slate-400 border border-slate-200/50 bg-slate-50 px-1.5 py-0.5 rounded">
+                      CLOSED
+                    </span>
+                    {isMasterPlanOpen ? <ChevronUp className="h-3.5 w-3.5 text-slate-400" /> : <ChevronDown className="h-3.5 w-3.5 text-slate-400" />}
+                  </div>
+                </button>
+
+                {isMasterPlanOpen && (
+                  <div className="p-3 border-t border-slate-150/60 bg-white space-y-3 font-sans text-left text-[11px] text-slate-600 leading-relaxed border-b border-dashed animate-fade-in">
+                    <p className="font-semibold text-slate-800">🎯 Overall Compilation Protocol</p>
+                    <p>
+                      Execute the current task using the progressive disclosure loop. Prioritize static analysis, complete isolated step verification, and emit state notifications before proceeding to secondary architectures.
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Simulated Phase Execution loop */}
             {simulatedTasks.length === 0 ? (
-              <div className="h-full flex flex-col items-center justify-center text-center text-gray-400 px-4">
+              <div className="h-full flex flex-col items-center justify-center text-center text-gray-400 py-16">
                 <Cpu className="h-8 w-8 text-gray-250 mb-2 stroke-1" />
                 <p className="text-xs">No roadmap resolved. Select a template and press "Dispatch" to construct roadmap accordion elements.</p>
               </div>

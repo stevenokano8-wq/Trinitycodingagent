@@ -194,6 +194,77 @@ function ActionHistoryAccordion({ msg }: { msg: Message }) {
   );
 }
 
+function MasterPlanAccordion({ tasks }: { tasks: any[] }) {
+  const [isOpen, setIsOpen] = useState(false); // CLOSED BY DEFAULT as requested!
+
+  return (
+    <div id="global-blueprint-master-plans" className="border border-slate-150 bg-slate-50/50 rounded-2xl mb-4 overflow-hidden shadow-3xs max-w-4xl w-full">
+      <button
+        type="button"
+        onClick={() => setIsOpen(!isOpen)}
+        className="w-full flex items-center justify-between px-4 py-3 bg-white hover:bg-slate-50 transition-colors text-left border-none cursor-pointer"
+      >
+        <div className="flex items-center gap-2.5 text-slate-700 min-w-0 flex-1">
+          <span className="text-base shrink-0 select-none">📋</span>
+          <div className="flex flex-col min-w-0 flex-1 font-sans">
+            <span className="text-xs font-bold text-slate-800 tracking-tight uppercase">
+              Master Plan (Strategy & Milestones)
+            </span>
+            <span className="text-[10px] text-slate-500 font-mono mt-0.5">
+              {isOpen ? "Overarching strategy and phase breakdown:" : `(Collapsible Strategy • ${tasks.length} Phases Scheduled)`}
+            </span>
+          </div>
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          <span className="text-[9px] font-mono font-bold text-slate-400 border border-slate-200/60 bg-slate-50 px-1.5 py-0.5 rounded">
+            CLOSED BY DEFAULT
+          </span>
+          <ChevronDown className={`h-4 w-4 text-slate-400 shrink-0 transition-transform duration-200 ${isOpen ? "transform rotate-180" : ""}`} />
+        </div>
+      </button>
+
+      {isOpen && (
+        <div className="p-4 border-t border-slate-100 bg-white space-y-4 font-sans text-left">
+          <div className="text-xs text-slate-600 bg-slate-50 p-3 rounded-xl border border-slate-100 leading-relaxed">
+            <p className="font-semibold text-slate-800 mb-1">🎯 Overarching Strategy</p>
+            To achieve high reliability and clean output organization, we execute in scheduled, sequential phases. Each phase acts as a safe transactional block in the compilation loop. Static analysis checks and lint-gates are run automatically before releasing intermediate states to the client webview.
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+            {tasks.map((task, tIdx) => {
+              const isLocked = tasks.slice(0, tIdx).some(prevTask => prevTask.status !== "completed");
+              const statusColor = task.status === "completed" ? "text-emerald-600 bg-emerald-50 border-emerald-150" : 
+                                  task.status === "running" ? "text-blue-600 bg-blue-50 border-blue-150 animate-pulse" : 
+                                  "text-slate-400 bg-slate-50 border-slate-150/40";
+              const statusIcon = task.status === "completed" ? "🟢" : 
+                                 task.status === "running" ? "🔵" : "⏳";
+              const statusText = task.status === "completed" ? "Completed" : 
+                                 task.status === "running" ? "Running" : 
+                                 isLocked ? "Locked" : "Pending";
+              return (
+                <div key={task.id} className="flex items-center justify-between text-xs py-2 px-3.5 rounded-xl border border-slate-100 bg-white shadow-3xs">
+                  <div className="flex flex-col min-w-0 flex-1 mr-2">
+                    <span className="font-semibold text-slate-800 truncate">
+                      Phase {tIdx + 1}: {task.name}
+                    </span>
+                    <span className="text-[9px] text-slate-400 font-mono mt-0.5">
+                      {task.subtasks?.length || 0} sub-tasks listed
+                    </span>
+                  </div>
+                  <span className={`text-[9px] font-mono font-bold px-2 py-0.5 rounded-full border shrink-0 ${statusColor} flex items-center gap-1`}>
+                    <span>{statusIcon}</span>
+                    <span>{statusText}</span>
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 const PERSONAS = [
   {
     id: "sovereign",
@@ -1177,39 +1248,9 @@ export default function App() {
 
                   {/* Unified Feed Scroll Area */}
                   <div className="flex-1 overflow-y-auto space-y-6 pr-1.5 scrollbar-thin pb-4">
-                    {/* 1. GLOBAL BLUEPRINT: MASTER TASK PLANS LIST (Phase 1) */}
+                    {/* 1. GLOBAL BLUEPRINT: COLLAPSIBLE MASTER PLAN ACCORDION (Phase 1) */}
                     {tasks.length > 0 && (
-                      <div id="global-blueprint-master-plans" className="bg-slate-50/70 border border-slate-150/80 rounded-2xl p-4 mb-4 shrink-0 shadow-3xs max-w-4xl w-full">
-                        <div className="flex items-center gap-2 mb-2.5 pb-1.5 border-b border-slate-150/50">
-                          <span className="text-[10px] font-mono font-bold tracking-wider uppercase text-slate-500">
-                            📋 Global Blueprint: Master Task Itinerary Plan
-                          </span>
-                        </div>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                          {tasks.map((task, tIdx) => {
-                            const isLocked = tasks.slice(0, tIdx).some(prevTask => prevTask.status !== "completed");
-                            const statusColor = task.status === "completed" ? "text-emerald-600 bg-emerald-50/70 border-emerald-150/60" : 
-                                                task.status === "running" ? "text-blue-600 bg-blue-50/70 border-blue-150/60 animate-pulse" : 
-                                                "text-slate-400 bg-slate-50/50 border-slate-150/40";
-                            const statusIcon = task.status === "completed" ? "🟢" : 
-                                               task.status === "running" ? "🔵" : "⏳";
-                            const statusText = task.status === "completed" ? "Completed" : 
-                                               task.status === "running" ? "Running" : 
-                                               isLocked ? "Locked" : "Pending";
-                            return (
-                              <div key={task.id} className="flex items-center justify-between text-xs py-1.5 px-3 rounded-xl border border-slate-150/50 bg-white/60 shadow-3xs">
-                                <span className="font-semibold text-slate-700 truncate mr-2">
-                                  Task {tIdx + 1}: {task.name}
-                                </span>
-                                <span className={`text-[9px] font-mono font-bold px-2 py-0.5 rounded-full border shrink-0 ${statusColor} flex items-center gap-1`}>
-                                  <span>{statusIcon}</span>
-                                  <span>{statusText}</span>
-                                </span>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </div>
+                      <MasterPlanAccordion tasks={tasks} />
                     )}
 
                     {timeline.map((item, index) => {

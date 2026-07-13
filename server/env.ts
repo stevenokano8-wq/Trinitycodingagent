@@ -35,6 +35,19 @@ export interface KVNamespace {
   list(options?: { prefix?: string }): Promise<{ keys: { name: string }[] }>;
 }
 
+// Cloudflare Workers AI binding (declared as [ai] in wrangler.api.toml).
+// Used for fast task-planning (division of labor); Gemini handles code synthesis.
+export interface AiTextResponse {
+  response: string;
+}
+export interface AiChatMessage {
+  role: "system" | "user" | "assistant";
+  content: string;
+}
+export interface AiBinding {
+  run(model: string, input: { messages?: AiChatMessage[]; prompt?: string; max_tokens?: number }): Promise<AiTextResponse>;
+}
+
 export interface AppEnv {
   // Cloudflare D1 binding (declared as [[d1_databases]] in wrangler.api.toml).
   // Undefined in local Node dev (`pnpm dev`), where the in-memory fallback is used.
@@ -42,6 +55,8 @@ export interface AppEnv {
   // Cloudflare Workers KV binding (declared as [[kv_namespaces]] in wrangler.api.toml).
   // Undefined in local Node dev (`pnpm dev`), where the in-memory fallback is used.
   CACHE_KV?: KVNamespace;
+  // Cloudflare Workers AI binding for task planning (declared as [ai] in wrangler.api.toml).
+  AI?: AiBinding;
   // AI + GitHub sync
   GEMINI_API_KEY?: string;
   GITHUB_TOKEN?: string;

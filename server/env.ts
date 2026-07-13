@@ -58,8 +58,8 @@ export function resolveEnv(env?: Partial<AppEnv>): AppEnv {
     DB: env?.DB,
     CACHE_KV: env?.CACHE_KV,
     GEMINI_API_KEY: env?.GEMINI_API_KEY ?? proc.GEMINI_API_KEY,
-    GITHUB_TOKEN: env?.GITHUB_TOKEN ?? proc.GITHUB_TOKEN,
-    GITHUB_REPO_URL: env?.GITHUB_REPO_URL ?? proc.GITHUB_REPO_URL,
+    GITHUB_TOKEN: env?.GITHUB_TOKEN || "",
+    GITHUB_REPO_URL: env?.GITHUB_REPO_URL || "",
   };
 }
 

@@ -731,7 +731,12 @@ export default function App() {
       const res = await fetch(`${API_BASE}/api/messages`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ role: "user", content: userText, attachment: currentAttachment }),
+        body: JSON.stringify({ 
+          role: "user", 
+          content: userText, 
+          attachment: currentAttachment,
+          sessionId: activeSessionId
+        }),
       });
 
       if (!res.ok) {
@@ -1625,7 +1630,7 @@ export default function App() {
               exit={{ opacity: 0 }}
               className="flex-1 flex flex-col min-h-0"
             >
-              <GithubView />
+              <GithubView sessionId={activeSessionId} />
             </motion.div>
           )}
 

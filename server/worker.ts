@@ -56,7 +56,7 @@ app.post("/api/messages", async (c) => {
   await ensureInit(c.env);
   try {
     const body = await c.req.json();
-    const { role, content, attachment } = body;
+    const { role, content, attachment, sessionId } = body;
     if (!content) return c.json({ error: "Content is required" }, 400);
 
     const userMsg: Message = {
@@ -77,10 +77,32 @@ app.post("/api/messages", async (c) => {
           await saveTask(task);
         }
 
+        // Load session-specific GitHub configuration from Workers KV if available
+        let sessionGitToken = "";
+        let sessionGitRepoUrl = "";
+        if (sessionId && c.env.CACHE_KV) {
+          const cached = await c.env.CACHE_KV.get(`github_config:${sessionId}`);
+          if (cached) {
+            try {
+              const data = JSON.parse(cached);
+              sessionGitToken = data.token || "";
+              sessionGitRepoUrl = data.repoUrl || "";
+            } catch (e) {
+              console.error("Failed to parse cached github config for session:", e);
+            }
+          }
+        }
+
+        const customEnv = {
+          ...c.env,
+          GITHUB_TOKEN: sessionGitToken || undefined,
+          GITHUB_REPO_URL: sessionGitRepoUrl || undefined,
+        };
+
         // Long-running background build: must be kept alive with waitUntil,
         // otherwise the Worker would tear down the request context as soon
         // as this handler returns its response.
-        c.executionCtx.waitUntil(executeAgentBuild(content, plannedTasks, c.env, attachment));
+        c.executionCtx.waitUntil(executeAgentBuild(content, plannedTasks, customEnv, attachment));
 
         return c.json({ message: userMsg, tasks: plannedTasks });
       } catch (agentErr: any) {
@@ -224,9 +246,27 @@ app.post("/api/settings", async (c) => {
   }
 });
 
-app.get("/api/github/config", (c) => {
+app.get("/api/github/config", async (c) => {
   try {
-    return c.json(getGithubConfig(c.env));
+    const sessionId = c.req.query("sessionId");
+    if (sessionId && c.env.CACHE_KV) {
+      const cached = await c.env.CACHE_KV.get(`github_config:${sessionId}`);
+      if (cached) {
+        try {
+          const data = JSON.parse(cached);
+          const token = data.token || "";
+          return c.json({
+            repoUrl: data.repoUrl || "",
+            branch: data.branch || "main",
+            hasToken: !!token,
+            maskedToken: token ? `${token.substring(0, 4)}••••••••` : "",
+          });
+        } catch (e) {
+          console.error("Failed to parse cached config:", e);
+        }
+      }
+    }
+    return c.json({ repoUrl: "", branch: "main", hasToken: false, maskedToken: "" });
   } catch (err: any) {
     return c.json({ error: err.message }, 500);
   }
@@ -234,8 +274,30 @@ app.get("/api/github/config", (c) => {
 
 app.post("/api/github/config", async (c) => {
   try {
-    const { token, repoUrl } = await c.req.json();
-    saveGithubConfig(token, repoUrl);
+    const { token, repoUrl, branch, sessionId } = await c.req.json();
+    if (sessionId && c.env.CACHE_KV) {
+      let existingToken = "";
+      let existingBranch = "main";
+      const cached = await c.env.CACHE_KV.get(`github_config:${sessionId}`);
+      if (cached) {
+        try {
+          const data = JSON.parse(cached);
+          existingToken = data.token || "";
+          existingBranch = data.branch || "main";
+        } catch (e) {
+          console.error("Failed parsing cached config on save:", e);
+        }
+      }
+
+      await c.env.CACHE_KV.put(
+        `github_config:${sessionId}`,
+        JSON.stringify({
+          token: token !== undefined ? token : existingToken,
+          repoUrl: repoUrl || "",
+          branch: branch || existingBranch,
+        })
+      );
+    }
     return c.json({ status: "success", message: "GitHub configuration updated successfully." });
   } catch (err: any) {
     return c.json({ error: err.message }, 500);
@@ -246,17 +308,31 @@ app.post("/api/github/push", async (c) => {
   await ensureInit(c.env);
   try {
     const body = await c.req.json().catch(() => ({}));
-    const { token, repoUrl, branch } = body;
-    const resolved = resolveEnvWithOverrides(c.env);
+    const { token, repoUrl, branch, sessionId } = body;
 
-    const currentToken = token || resolved.GITHUB_TOKEN;
-    const currentRepoUrl = repoUrl || resolved.GITHUB_REPO_URL;
+    let currentToken = token;
+    let currentRepoUrl = repoUrl;
+    let currentBranch = branch || "main";
 
-    if (!currentToken) return c.json({ error: "GitHub API Token is required. Please configure it or pass it." }, 400);
-    if (!currentRepoUrl) return c.json({ error: "GitHub Repository URL is required. Please configure it or pass it." }, 400);
+    if (sessionId && c.env.CACHE_KV) {
+      const cached = await c.env.CACHE_KV.get(`github_config:${sessionId}`);
+      if (cached) {
+        try {
+          const data = JSON.parse(cached);
+          if (!currentToken) currentToken = data.token;
+          if (!currentRepoUrl) currentRepoUrl = data.repoUrl;
+          if (!branch) currentBranch = data.branch || "main";
+        } catch (e) {
+          console.error("Failed parsing cached config on push:", e);
+        }
+      }
+    }
+
+    if (!currentToken) return c.json({ error: "GitHub API Token is required. Please sign in or configure it for this session." }, 400);
+    if (!currentRepoUrl) return c.json({ error: "GitHub Repository URL is required. Please configure it for this session." }, 400);
 
     const allFiles = await getFiles();
-    const result = await executeGitPush(currentToken, currentRepoUrl, branch || "main", allFiles);
+    const result = await executeGitPush(currentToken, currentRepoUrl, currentBranch, allFiles);
     return c.json(result);
   } catch (err: any) {
     return c.json({ error: err.message }, 500);

@@ -502,7 +502,7 @@ export default function TaskAccordion({
                   <SubtaskAccordionItem
                     key={sub.id}
                     sub={sub}
-                    isInitiallyOpen={sIdx === 0 || sub.status === "running" || sub.status === "failed"}
+                    isInitiallyOpen={sub.status === "running" || sub.status === "failed"}
                     isLocked={isSubtaskLocked}
                   />
                 );

@@ -4,6 +4,7 @@ import { saveTask, saveFile, addMessage, getTasks, getFiles } from "./db.js";
 import { cacheSet, cacheGet } from "./cache.js";
 import { executeGitPush } from "./github.js";
 import { AppEnv, resolveEnvWithOverrides, AiBinding } from "./env.js";
+import { routeLLMTask } from "./llmRouter.js";
 
 let aiClient: GoogleGenAI | null = null;
 let aiClientKey: string | null = null;
@@ -47,15 +48,78 @@ export function broadcastSSE(event: string, data: any) {
 // DIVISION OF LABOR: CF Workers AI handles planning (fast, no quota).
 // Gemini handles code synthesis only.
 // ------------------------------------------------------------------
-async function planWithCFWorkersAI(ai: AiBinding, userPrompt: string): Promise<Task[] | null> {
+
+function classifyPromptIntent(prompt: string): "system" | "aesthetic" | "feature" | "application" {
+  const p = prompt.toLowerCase();
+  
+  // 1. System commands & simple files
+  if (
+    p.includes("mkdir") || 
+    p.includes("create folder") || 
+    p.includes("make folder") || 
+    p.includes("create directory") || 
+    p.includes("delete file") || 
+    p.includes("remove file") || 
+    p.includes("delete folder") || 
+    p.includes("npm install") || 
+    p.includes("install package") || 
+    p.includes("run test") || 
+    p.includes("run command") || 
+    p.includes("git clone") ||
+    p.includes("git pull") ||
+    p.includes("git push")
+  ) {
+    return "system";
+  }
+
+  // 2. Aesthetic & minor styling changes (e.g., simple black background, fonts, theme colors)
+  if (
+    p.includes("background") || 
+    p.includes("color") || 
+    p.includes("font") || 
+    p.includes("css") || 
+    p.includes("theme") || 
+    p.includes("styling") || 
+    p.includes("layout background") || 
+    p.includes("dark mode") || 
+    p.includes("light mode")
+  ) {
+    return "aesthetic";
+  }
+
+  // 3. Simple UI Features/Components (e.g. button, form, input, popup, clock, navbar)
+  if (
+    p.includes("button") || 
+    p.includes("form") || 
+    p.includes("card") || 
+    p.includes("modal") || 
+    p.includes("popup") || 
+    p.includes("timer") || 
+    p.includes("counter") || 
+    p.includes("clock") || 
+    p.includes("navbar") || 
+    p.includes("header") || 
+    p.includes("footer") || 
+    p.includes("input")
+  ) {
+    return "feature";
+  }
+
+  // 4. Default to full application build
+  return "application";
+}
+
+async function planWithCFWorkersAI(ai: AiBinding, userPrompt: string, intent: string): Promise<Task[] | null> {
   try {
     const systemPrompt = `You are a precise software task planner. Return ONLY valid JSON — no markdown, no prose, no code fences.
 Exact shape: {"tasks":[{"name":"Task title","subtasks":["step description"]}]}
 
-Planning rules:
-- Simple command (mkdir, create folder, npm install, delete file, run test): 1 task, 1-2 subtasks. Keep it minimal — no React, no UI code.
-- Full app or feature build: 2-3 tasks, 2-3 subtasks each.
-- Every subtask is a plain English sentence describing one concrete action.`;
+Planning rules based on user prompt intent [${intent.toUpperCase()}]:
+${intent === "system" ? `- Since this is a simple system/file-system command, plan EXACTLY 1 task with EXACTLY 1 or 2 straightforward subtasks. Do NOT plan any React, UI, frontend, or code files.` : ""}
+${intent === "aesthetic" ? `- Since this is a simple aesthetic/styling change, plan EXACTLY 1 task with EXACTLY 1 or 2 simple subtasks total. Do NOT create multi-tier systems, backend servers, or complex components.` : ""}
+${intent === "feature" ? `- Since this is a self-contained feature, plan 1 or 2 tasks with 1 or 2 subtasks each.` : ""}
+${intent === "application" ? `- Since this is a full app or feature build, plan 2 or 3 tasks with 2 or 3 subtasks each.` : ""}
+- Every subtask description MUST be a plain English sentence explaining one concrete action.`;
 
     const resp = await ai.run("@cf/meta/llama-3.3-70b-instruct-fp8-fast", {
       messages: [
@@ -97,11 +161,13 @@ Planning rules:
 
 // Generates tasks and subtasks structure based on a user prompt
 export async function planBuildTasks(userPrompt: string, env?: Partial<AppEnv>, attachment?: any): Promise<Task[]> {
+  const intent = classifyPromptIntent(userPrompt);
+
   // Division of labor: try CF Workers AI first (fast, zero quota cost).
   if (env?.AI && !attachment) {
-    const cfTasks = await planWithCFWorkersAI(env.AI, userPrompt);
+    const cfTasks = await planWithCFWorkersAI(env.AI, userPrompt, intent);
     if (cfTasks && cfTasks.length > 0) {
-      console.log(`Task planning delegated to Cloudflare Workers AI (${cfTasks.length} tasks created).`);
+      console.log(`Task planning delegated to Cloudflare Workers AI (${cfTasks.length} tasks created) with intent [${intent}].`);
       return cfTasks;
     }
   }
@@ -109,17 +175,37 @@ export async function planBuildTasks(userPrompt: string, env?: Partial<AppEnv>, 
   // Fall through to Gemini if CF AI is unavailable (local dev, no binding) or returns invalid JSON.
   try {
     const ai = getGeminiClient(env);
-    console.log("Planning build tasks using Gemini (primary / fallback)...");
+    
+    // Analyze prompt complexity and route accordingly
+    const route = routeLLMTask(userPrompt, undefined, attachment?.name);
+    console.log(`[LLM Router] Planning task routed: Model = ${route.model}, Complexity = ${route.complexity.toUpperCase()} (Score: ${route.score}/10). Reason: ${route.reason}`);
+
+    console.log(`Planning build tasks using Gemini model "${route.model}" with intent [${intent}] (primary / fallback)...`);
 
     const promptText = `You are Sovereign Agent, a highly execution-focused, expert full-stack development agent.
       
       We are processing a user command: "${userPrompt}".
       ${attachment ? `The user also uploaded an attachment named "${attachment.name}" of type "${attachment.type}". Please design tasks and code structure to process/integrate this file appropriately.` : ""}
       
-      CRITICAL INSTRUCTIONS FOR SIMPLE SYSTEM/FILE-SYSTEM COMMANDS:
-      - If the user request is a simple command (e.g., "Create a folder", "mkdir", "npm install", "delete a file", "run test", "create directory"), do NOT plan complex React components, frontend layouts, button features, or modal UIs.
-      - Instead, plan a single execution-focused task containing only the exact system/file-system steps required to perform the action directly. E.g., for "Create a folder", plan exactly 1 task called "Execute folder creation" containing 1 or 2 straightforward subtasks like "Create target directory" and "Verify directory existence".
-      - If and only if the user explicitly asks to build an interactive feature or a full application (e.g., "build a todo list", "create a login page feature"), you should break down the request into exactly 3 key developmental tasks.
+      CRITICAL PLANNING BOUNDARIES FOR INTENT [${intent.toUpperCase()}]:
+      ${intent === "system" ? `
+      - This is a simple system/file-system command. 
+      - Plan EXACTLY 1 task with EXACTLY 1 or 2 straightforward subtasks. 
+      - Do NOT plan complex React components, frontend layouts, button features, or modal UIs.
+      ` : ""}
+      ${intent === "aesthetic" ? `
+      - This is a simple styling/aesthetic change.
+      - Plan EXACTLY 1 task with EXACTLY 1 or 2 simple subtasks total.
+      - Do NOT create multiple files, database schemas, API routers, or complex components. Target only the direct layout change.
+      ` : ""}
+      ${intent === "feature" ? `
+      - This is a self-contained feature.
+      - Plan 1 or 2 tasks with 1 or 2 subtasks each. Focus only on the component or page itself.
+      ` : ""}
+      ${intent === "application" ? `
+      - This is a full application or complex dashboard.
+      - Plan 2 or 3 tasks with 2 or 3 subtasks each.
+      ` : ""}
       
       Analyze the request carefully and output the appropriate task structure.`;
 
@@ -136,7 +222,7 @@ export async function planBuildTasks(userPrompt: string, env?: Partial<AppEnv>, 
     ] : promptText;
 
     const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
+      model: route.model,
       contents,
       config: {
         responseMimeType: "application/json",
@@ -194,8 +280,28 @@ export async function planBuildTasks(userPrompt: string, env?: Partial<AppEnv>, 
     return parsedTasks;
   } catch (err: any) {
     console.error("Failed planning build tasks with Gemini, creating default template tasks:", err.message);
-    // Fallback tasks if Gemini is offline or API key is missing
+    // Fallback tasks dynamically matching the user's intent if Gemini is offline or API key is missing
     const taskId1 = `task-${Date.now()}-0`;
+    
+    if (intent === "system" || intent === "aesthetic") {
+      const taskName = intent === "system" ? "Execute System Command" : "Apply Aesthetic Styling";
+      const subtaskName = intent === "system" ? "Execute requested command actions" : "Apply requested visual theme styling";
+      return [
+        {
+          id: taskId1,
+          name: taskName,
+          status: "pending",
+          progress: 0,
+          activeSubtaskIndex: 0,
+          createdAt: new Date().toISOString(),
+          subtasks: [
+            { id: `${taskId1}-sub-0`, taskId: taskId1, name: subtaskName, status: "pending", logs: ["Waiting..."] },
+            { id: `${taskId1}-sub-1`, taskId: taskId1, name: "Verify task execution and status", status: "pending", logs: ["Waiting..."] }
+          ]
+        }
+      ];
+    }
+
     const taskId2 = `task-${Date.now()}-1`;
     const taskId3 = `task-${Date.now()}-2`;
     return [
@@ -451,6 +557,7 @@ function generateActionStepsForSubtask(subtaskName: string, prompt: string, sIdx
 // and writes real-time logs and generated files!
 export async function executeAgentBuild(prompt: string, tasks: Task[], env?: Partial<AppEnv>, attachment?: any) {
   const startTime = Date.now();
+  const modelsUsed = new Set<string>();
   console.log(`Starting execution for prompt: ${prompt}`);
   activeCancellationSignal = { aborted: false, taskId: "" };
 
@@ -600,14 +707,24 @@ export async function executeAgentBuild(prompt: string, tasks: Task[], env?: Par
         if (currentStep.log.includes("Writing code implementation")) {
           try {
             const ai = getGeminiClient(env);
+            
+            // Analyze complexity of subtask and route dynamically
+            const route = routeLLMTask(prompt, sub.name, attachment?.name);
+            const modelShort = route.model === "gemini-3.1-pro-preview" ? "Pro" : "Flash";
+            modelsUsed.add(modelShort);
+
+            const routerLog = `[LLM Router] Routing subtask: Complexity is ${route.complexity.toUpperCase()} (Score: ${route.score}/10). Routed to: ${modelShort} (${route.model}). Reason: ${route.reason}`;
+            sub.logs.push(routerLog);
+            broadcastSSE("subtask_log", { subtaskId: sub.id, log: routerLog });
+
             const filePrompt = `You are a professional full-stack developer. Write a fully-functional, beautiful, complete TypeScript React file, Express router, HTML, or schema file for the subtask: "${sub.name}" inside the larger project of: "${prompt}". Return ONLY the code, with no markdown tags, and no conversational text. Start with the code directly.`;
             
-            const sysLog = `[SYSTEM] Requesting AI code synthesis for code modules...`;
+            const sysLog = `[SYSTEM] Requesting AI code synthesis using ${modelShort} model...`;
             sub.logs.push(sysLog);
             broadcastSSE("subtask_log", { subtaskId: sub.id, log: sysLog });
 
             const fileRes = await ai.models.generateContent({
-              model: "gemini-3.5-flash",
+              model: route.model,
               contents: attachment ? [
                 {
                   inlineData: {
@@ -761,6 +878,10 @@ export async function executeAgentBuild(prompt: string, tasks: Task[], env?: Par
 
   // Generate an explanation focusing strictly on the core request without unrequested technical reports
   let finalSummaryText = "";
+  const routingSummary = modelsUsed.size > 0 
+    ? `\n- **Intelligent LLM Routing**: Dynamically analyzed complexity and delegated subtasks to appropriate Gemini models: **${Array.from(modelsUsed).map(m => m === "Pro" ? "Pro (Architectural)" : "Flash (Responsive)").join(" & ")}**` 
+    : "";
+
   if (activeCancellationSignal.aborted) {
     finalSummaryText = `### Sovereign Agent Task Report: CANCELLED\nThe development run was cancelled by the user. Some tasks may have been aborted.`;
   } else if (shouldAudit) {
@@ -770,17 +891,30 @@ I have successfully audited, verified, and compiled the full stack components fo
 - **Structured Folder Organization**: Created separate, logical components directories and generated nested code files to keep code highly modular.
 - **Checked Syntax & Indentation Checks**: Verified brackets balance, proper formatting, and style rules recursively across all created nodes.
 - **TypeScript Static Verification**: Type-checked generated elements and API routes, achieving standard static typing compliance.
-- **Verified Production Bundle**: Successfully compiled all modules with Vite to build highly-optimized production distribution assets.${gitPushStatus}`;
+- **Verified Production Bundle**: Successfully compiled all modules with Vite to build highly-optimized production distribution assets.${routingSummary}${gitPushStatus}`;
   } else {
     // Keep final report strictly focused on the core request (e.g. Folder created successfully) without technical report boilerplates or indentation checks
     finalSummaryText = `### Sovereign Agent Task Report
 I have successfully completed the tasks for **"${prompt}"**:
 
 - **Core Implementation**: Completed and implemented all requested structures, configurations, and directory modules.
-- **Resource Placement**: Files and directories placed in proper target locations successfully.${gitPushStatus}`;
+- **Resource Placement**: Files and directories placed in proper target locations successfully.${routingSummary}${gitPushStatus}`;
   }
 
   // Create final agent response message in the chat
+  const hasWorkersAI = !!env?.AI;
+  let activeModelName = "";
+  if (modelsUsed.size > 0) {
+    const modelsList = Array.from(modelsUsed).map(m => m === "Pro" ? "Gemini Pro" : "Gemini Flash");
+    activeModelName = hasWorkersAI 
+      ? `LLaMA 3.3 + LLM Router [${modelsList.join(" + ")}]` 
+      : `LLM Router [${modelsList.join(" + ")}]`;
+  } else {
+    activeModelName = hasWorkersAI 
+      ? "LLaMA 3.3 (Task Planner) + Gemini 3.5 Flash (Code Synthesis)" 
+      : "Gemini 3.5 Flash (Planning & Synthesis)";
+  }
+
   const assistantMsg: Message = {
     id: `msg-${Date.now()}-finish`,
     role: "assistant",
@@ -788,7 +922,7 @@ I have successfully completed the tasks for **"${prompt}"**:
     timestamp: new Date().toISOString(),
     actionsTaken,
     thoughtTimeSeconds,
-    modelName: "Gemini 3.5 Flash",
+    modelName: activeModelName,
     durationSeconds
   };
 

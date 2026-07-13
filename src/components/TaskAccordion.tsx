@@ -1,228 +1,282 @@
-import React, { useState, useMemo } from "react";
+import React, { useState } from "react";
 import { Task, Subtask } from "../types.js";
-import { ChevronDown, ChevronRight, CheckCircle, RefreshCw, Clock, Copy, Terminal, Play } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronUp,
+  CheckCircle2,
+  RefreshCw,
+  Clock,
+  Copy,
+  Terminal,
+  BookOpen,
+  PenLine,
+  Brain,
+  XCircle,
+} from "lucide-react";
 
 interface TaskAccordionProps {
-  tasks: Task[];
-  // Optional callbacks so parent can react to user actions
+  task: Task;
+  isInitiallyExpanded?: boolean;
+  isLocked?: boolean;
+  taskIndex?: number;
   onCancelTask?: (taskId: string) => void;
-  onOpenSubtask?: (taskId: string, subtaskIndex: number) => void;
 }
 
-function Spinner({ size = 14 }: { size?: number }) {
-  return <RefreshCw className={`h-${size} w-${size} animate-spin text-amber-400`} />;
+// Logs prefixed with "[Sovereign Agent]" / "[SYSTEM]" that describe a shift in
+// what the agent is doing are treated as "step" markers — in the expanded
+// view these render as bold section dividers instead of plain log lines,
+// mirroring how a real coding agent groups a burst of actions under a
+// heading (e.g. "Planning ActionsGroup component redesign").
+function isStepLog(line: string): boolean {
+  if (!line) return false;
+  return /^\[(sovereign agent|system)\]/i.test(line.trim());
 }
 
-function extractLatestStepDescription(sub: Subtask): string | null {
-  // Heuristic: treat logs that start with "STEP" or contain "step:" as step markers
+function stepLabel(line: string): string {
+  return line.replace(/^\[[^\]]*\]\s*/i, "").replace(/\.\.\.$/, "").trim();
+}
+
+// Classify a single log line into an icon + kind so the collapsed action
+// list can show "Opened X", "Edited Y", "Planning Z" the way a real agent
+// transcript does, instead of a wall of raw log text.
+type LogKind = "opened" | "edited" | "planning" | "command" | "success" | "info";
+
+function classifyLog(line: string): { kind: LogKind; label: string } {
+  const trimmed = line.replace(/^\[[0-9:APM\s]+\]\s*/i, "");
+  if (/^cmd>/i.test(trimmed)) {
+    return { kind: "command", label: trimmed.replace(/^cmd>\s*/i, "") };
+  }
+  if (/^\[success\]/i.test(trimmed)) {
+    return { kind: "success", label: trimmed.replace(/^\[success\]\s*/i, "") };
+  }
+  if (/analyzing|planning|routing|requesting ai/i.test(trimmed)) {
+    return { kind: "planning", label: stepLabel(trimmed) };
+  }
+  if (/writing code implementation|generated and stored|initialized code module/i.test(trimmed)) {
+    return { kind: "edited", label: stepLabel(trimmed) };
+  }
+  if (/^\[info\]/i.test(trimmed)) {
+    return { kind: "info", label: trimmed.replace(/^\[info\]\s*/i, "") };
+  }
+  return { kind: "opened", label: stepLabel(trimmed) };
+}
+
+function LogIcon({ kind }: { kind: LogKind }) {
+  const cls = "h-3.5 w-3.5 shrink-0";
+  switch (kind) {
+    case "edited":
+      return <PenLine className={`${cls} text-indigo-500`} />;
+    case "planning":
+      return <Brain className={`${cls} text-violet-500`} />;
+    case "command":
+      return <Terminal className={`${cls} text-slate-500`} />;
+    case "success":
+      return <CheckCircle2 className={`${cls} text-emerald-500`} />;
+    default:
+      return <BookOpen className={`${cls} text-slate-400`} />;
+  }
+}
+
+function extractLatestStepDescription(sub: Subtask | null): string | null {
+  if (!sub) return null;
   for (let i = sub.logs.length - 1; i >= 0; i--) {
     const l = sub.logs[i];
-    if (!l) continue;
-    const normalized = l.toLowerCase();
-    if (normalized.startsWith("step") || normalized.includes("step:") || normalized.startsWith("[step]") ) {
-      // Trim any leading marker and return human-friendly text
-      return l.replace(/^\[?step\]?[:\-\s]*/i, "").trim();
-    }
+    if (isStepLog(l)) return stepLabel(l);
   }
   return null;
 }
 
-function isStepLog(line: string) {
-  if (!line) return false;
-  const l = line.toLowerCase();
-  return l.startsWith("step") || l.startsWith("[step]") || l.includes("step:");
-}
+export default function TaskAccordion({ task, isInitiallyExpanded, isLocked, onCancelTask }: TaskAccordionProps) {
+  const [isOpen, setIsOpen] = useState<boolean>(!!isInitiallyExpanded);
+  const [openSubtask, setOpenSubtask] = useState<number | null>(
+    task.status === "running" ? task.activeSubtaskIndex : null
+  );
 
-export default function TaskAccordion({ tasks, onCancelTask, onOpenSubtask }: TaskAccordionProps) {
-  const [openTaskId, setOpenTaskId] = useState<string | null>(null);
-  const [openSubtask, setOpenSubtask] = useState<Record<string, number | null>>({});
+  const subtaskCount = task.subtasks?.length || 0;
+  const currentSub = task.subtasks?.[task.activeSubtaskIndex] ?? null;
+  const currentStepDesc = task.status === "running" ? extractLatestStepDescription(currentSub) : null;
+  const totalSteps = task.subtasks.reduce((n, s) => n + (s.logs?.filter(isStepLog).length ?? 0), 0);
 
-  const toggleTask = (id: string) => setOpenTaskId((cur) => (cur === id ? null : id));
-  const toggleSubtask = (taskId: string, idx: number) => {
-    setOpenSubtask((prev) => ({ ...prev, [taskId]: prev[taskId] === idx ? null : idx }));
-    onOpenSubtask?.(taskId, idx);
+  const toggleSubtask = (idx: number) => {
+    setOpenSubtask((cur) => (cur === idx ? null : idx));
   };
 
-  if (!tasks || tasks.length === 0) {
-    return (
-      <div className="p-4 text-sm text-gray-500 font-mono">No tasks available.</div>
-    );
-  }
-
   return (
-    <div className="space-y-3">
-      {tasks.map((task) => {
-        const isOpen = openTaskId === task.id;
-        const subtaskCount = task.subtasks?.length || 0;
-        const currentSub = task.subtasks?.[task.activeSubtaskIndex] ?? null;
-        const currentStepDesc = currentSub ? extractLatestStepDescription(currentSub) : null;
+    <div className="bg-white border border-gray-100 rounded-2xl shadow-xs overflow-hidden">
+      {/* Header */}
+      <div className="p-3.5 flex items-center justify-between gap-3">
+        <button
+          type="button"
+          aria-expanded={isOpen}
+          onClick={() => setIsOpen((v) => !v)}
+          disabled={isLocked}
+          className="flex items-center gap-3 min-w-0 flex-1 text-left group"
+        >
+          <span className="p-1.5 rounded-md group-hover:bg-gray-50 text-gray-500 shrink-0">
+            {isOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronUp className="h-4 w-4 rotate-90" />}
+          </span>
 
-        return (
-          <div key={task.id} className="bg-white border border-gray-100 rounded-2xl shadow-xs overflow-hidden">
-            {/* Header */}
-            <div className="p-3.5 flex items-center justify-between gap-3">
-              <div className="flex items-center gap-3 min-w-0">
-                <button
-                  aria-expanded={isOpen}
-                  onClick={() => toggleTask(task.id)}
-                  className="p-2 rounded-md hover:bg-gray-50 text-gray-700"
-                  title={isOpen ? "Collapse" : "Expand"}
-                >
-                  {isOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-                </button>
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-sm font-bold text-gray-800 truncate" title={task.name}>
+                {task.name}
+              </span>
 
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2">
-                    <div className="text-sm font-bold text-gray-800 truncate" title={task.name}>{task.name}</div>
+              {/* "N steps" badge pill (renamed from "N actions") */}
+              <span className="text-[11px] bg-gray-100 text-gray-700 px-2 py-0.5 rounded-full font-mono">
+                {totalSteps > 0 ? totalSteps : subtaskCount} steps
+              </span>
 
-                    {/* N steps badge pill */}
-                    <div className="ml-1 text-[11px] bg-gray-100 text-gray-700 px-2 py-0.5 rounded-full font-mono">
-                      {subtaskCount} steps
-                    </div>
-
-                    {/* status indicator: spinner + color when running, check when completed */}
-                    <div className="ml-2">
-                      {task.status === "running" ? (
-                        <div className="flex items-center gap-1 text-amber-400">
-                          <RefreshCw className="h-4 w-4 animate-spin text-amber-400" />
-                          <span className="sr-only">Running</span>
-                        </div>
-                      ) : task.status === "completed" ? (
-                        <CheckCircle className="h-4 w-4 text-emerald-500" />
-                      ) : (
-                        <Clock className="h-4 w-4 text-gray-400" />
-                      )}
-                    </div>
-
-                  </div>
-
-                  {/* current step description chip (latest step) */}
-                  {currentStepDesc && (
-                    <div className="mt-1 text-[12px] text-gray-500 truncate max-w-[48rem] font-mono">
-                      <span className="inline-block bg-gray-50 px-2 py-0.5 rounded-md text-[11px] text-gray-600">{currentStepDesc}</span>
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              <div className="flex items-center gap-3">
-                <div className="text-xs text-gray-500 font-mono">{task.progress}%</div>
-                <div>
-                  {/* Cancel button if running */}
-                  {task.status === "running" && (
-                    <button
-                      id={`btn-cancel-${task.id}`}
-                      onClick={() => onCancelTask?.(task.id)}
-                      className="text-[11px] bg-rose-50 text-rose-600 px-2 py-1 rounded-xl font-bold hover:bg-rose-100"
-                    >
-                      Cancel
-                    </button>
-                  )}
-                </div>
-              </div>
+              {/* Status indicator: spinner + color while running, no "RUNNING" text badge */}
+              <span className="inline-flex items-center">
+                {task.status === "running" ? (
+                  <RefreshCw className="h-4 w-4 animate-spin text-amber-500" aria-label="Running" />
+                ) : task.status === "completed" ? (
+                  <CheckCircle2 className="h-4 w-4 text-emerald-500" aria-label="Completed" />
+                ) : task.status === "failed" ? (
+                  <XCircle className="h-4 w-4 text-rose-500" aria-label="Failed" />
+                ) : (
+                  <Clock className="h-4 w-4 text-gray-300" aria-label="Pending" />
+                )}
+              </span>
             </div>
 
-            {/* Expanded content */}
-            {isOpen && (
-              <div className="border-t border-gray-100">
-                <div className="p-3 space-y-3">
-                  {/* Subtasks list */}
-                  {task.subtasks && task.subtasks.length > 0 ? (
-                    <div className="space-y-2">
-                      {task.subtasks.map((sub, sIdx) => {
-                        const subOpen = openSubtask[task.id] === sIdx;
-                        const latestStep = extractLatestStepDescription(sub);
-                        return (
-                          <div key={sub.id} className="bg-gray-50 border border-gray-100 rounded-xl overflow-hidden">
-                            <div className="p-3 flex items-start justify-between gap-3">
-                              <div className="flex items-start gap-3 min-w-0">
-                                <button
-                                  onClick={() => toggleSubtask(task.id, sIdx)}
-                                  className="p-1.5 rounded-md hover:bg-gray-100 text-gray-700"
-                                >
-                                  {subOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-                                </button>
-
-                                <div className="min-w-0">
-                                  <div className="flex items-center gap-2">
-                                    <div className="text-sm font-semibold text-gray-800 truncate" title={sub.name}>{sub.name}</div>
-
-                                    <div className="text-[11px] bg-white px-2 py-0.5 rounded-full text-gray-600 border border-gray-100 font-mono">
-                                      {sub.logs?.filter(Boolean).length ?? 0} steps
-                                    </div>
-                                  </div>
-
-                                  {latestStep && (
-                                    <div className="mt-1 text-[12px] text-gray-500 truncate font-mono">
-                                      <span className="inline-block bg-white/30 px-2 py-0.5 rounded-sm">{latestStep}</span>
-                                    </div>
-                                  )}
-                                </div>
-                              </div>
-
-                              <div className="flex items-center gap-2">
-                                <button
-                                  onClick={() => navigator.clipboard?.writeText(sub.code ?? "")}
-                                  className="text-xs text-gray-500 hover:text-gray-800 px-2 py-1 rounded-md"
-                                  title="Copy code snippet"
-                                >
-                                  <Copy className="h-4 w-4" />
-                                </button>
-                                <button
-                                  onClick={() => navigator.clipboard?.writeText(sub.logs?.join("\n") ?? "")}
-                                  className="text-xs text-gray-500 hover:text-gray-800 px-2 py-1 rounded-md"
-                                  title="Copy logs"
-                                >
-                                  <Terminal className="h-4 w-4" />
-                                </button>
-                              </div>
-                            </div>
-
-                            {/* Subtask expanded logs */}
-                            {subOpen && (
-                              <div className="p-3 border-t border-gray-100 bg-white">
-                                <div className="space-y-2 text-sm font-mono text-gray-700">
-                                  {sub.logs && sub.logs.length > 0 ? (
-                                    sub.logs.map((l, li) => {
-                                      if (isStepLog(l)) {
-                                        // Render a step divider with label
-                                        const label = l.replace(/^\[?step\]?[:\-\s]*/i, "");
-                                        return (
-                                          <div key={li} className="py-2">
-                                            <div className="text-[12px] font-bold text-gray-600 uppercase tracking-wider border-b border-gray-100 pb-1">{label}</div>
-                                          </div>
-                                        );
-                                      }
-                                      return (
-                                        <div key={li} className="py-1 text-[13px] text-gray-700 break-words">{l}</div>
-                                      );
-                                    })
-                                  ) : (
-                                    <div className="text-gray-500">No logs for this step yet.</div>
-                                  )}
-                                </div>
-
-                                {/* Code block preview */}
-                                {sub.code && (
-                                  <pre className="mt-3 bg-gray-900 text-gray-100 p-3 rounded-md overflow-auto text-xs">
-                                    <code>{sub.code}</code>
-                                  </pre>
-                                )}
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  ) : (
-                    <div className="text-gray-500">No subtasks defined for this task.</div>
-                  )}
-                </div>
+            {/* Current/latest step description shown live in the chip header while running */}
+            {currentStepDesc && (
+              <div className="mt-1 text-[12px] text-gray-500 truncate max-w-[36rem] font-mono">
+                <span className="inline-block bg-gray-50 px-2 py-0.5 rounded-md text-[11px] text-gray-600">
+                  {currentStepDesc}
+                </span>
               </div>
             )}
           </div>
-        );
-      })}
+        </button>
+
+        <div className="flex items-center gap-3 shrink-0">
+          <span className="text-xs text-gray-400 font-mono">{task.progress}%</span>
+          {task.status === "running" && (
+            <button
+              type="button"
+              onClick={() => onCancelTask?.(task.id)}
+              className="text-[11px] bg-rose-50 text-rose-600 px-2 py-1 rounded-xl font-bold hover:bg-rose-100"
+            >
+              Cancel
+            </button>
+          )}
+          {/* Explicit text-labeled toggle, matching "Show less / Show more" */}
+          <button
+            type="button"
+            onClick={() => setIsOpen((v) => !v)}
+            className="text-[11px] font-semibold text-gray-500 hover:text-gray-800 flex items-center gap-1"
+          >
+            {isOpen ? "Show less" : "Show more"}
+            {isOpen ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+          </button>
+        </div>
+      </div>
+
+      {/* Expanded content: flowing list of steps grouped as section dividers */}
+      {isOpen && (
+        <div className="border-t border-gray-100">
+          <div className="p-3 space-y-2">
+            {task.subtasks && task.subtasks.length > 0 ? (
+              task.subtasks.map((sub, sIdx) => {
+                const subOpen = openSubtask === sIdx;
+                const latestStep = extractLatestStepDescription(sub);
+                return (
+                  <div key={sub.id} className="bg-gray-50 border border-gray-100 rounded-xl overflow-hidden">
+                    <button
+                      type="button"
+                      onClick={() => toggleSubtask(sIdx)}
+                      className="w-full p-3 flex items-start justify-between gap-3 text-left"
+                    >
+                      <div className="flex items-start gap-3 min-w-0">
+                        <span className="mt-0.5 text-gray-500 shrink-0">
+                          {subOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronUp className="h-4 w-4 rotate-90" />}
+                        </span>
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-semibold text-gray-800 truncate" title={sub.name}>
+                              {sub.name}
+                            </span>
+                            <span className="text-[11px] bg-white px-2 py-0.5 rounded-full text-gray-600 border border-gray-100 font-mono">
+                              {sub.logs?.filter(Boolean).length ?? 0} logs
+                            </span>
+                            {sub.status === "running" && <RefreshCw className="h-3.5 w-3.5 animate-spin text-amber-500" />}
+                            {sub.status === "completed" && <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />}
+                            {sub.status === "failed" && <XCircle className="h-3.5 w-3.5 text-rose-500" />}
+                          </div>
+                          {latestStep && (
+                            <div className="mt-1 text-[12px] text-gray-500 truncate font-mono">
+                              <span className="inline-block bg-white/70 px-2 py-0.5 rounded-sm">{latestStep}</span>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-1.5 shrink-0" onClick={(e) => e.stopPropagation()}>
+                        <button
+                          type="button"
+                          onClick={() => navigator.clipboard?.writeText(sub.code ?? "")}
+                          className="text-gray-400 hover:text-gray-800 p-1.5 rounded-md hover:bg-white"
+                          title="Copy code snippet"
+                        >
+                          <Copy className="h-3.5 w-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => navigator.clipboard?.writeText(sub.logs?.join("\n") ?? "")}
+                          className="text-gray-400 hover:text-gray-800 p-1.5 rounded-md hover:bg-white"
+                          title="Copy logs"
+                        >
+                          <Terminal className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    </button>
+
+                    {subOpen && (
+                      <div className="p-3 border-t border-gray-100 bg-white">
+                        <div className="space-y-1.5 text-sm font-mono text-gray-700">
+                          {sub.logs && sub.logs.length > 0 ? (
+                            sub.logs.map((l, li) => {
+                              if (isStepLog(l)) {
+                                return (
+                                  <div key={li} className="pt-3 first:pt-0">
+                                    <div className="text-[11px] font-bold text-gray-600 uppercase tracking-wider border-b border-gray-100 pb-1.5">
+                                      {stepLabel(l)}
+                                    </div>
+                                  </div>
+                                );
+                              }
+                              const { kind, label } = classifyLog(l);
+                              return (
+                                <div key={li} className="flex items-center gap-2 py-1 text-[13px] text-gray-700 break-words">
+                                  <LogIcon kind={kind} />
+                                  <span>{label}</span>
+                                </div>
+                              );
+                            })
+                          ) : (
+                            <div className="text-gray-400">No logs for this step yet.</div>
+                          )}
+                        </div>
+
+                        {sub.code && (
+                          <pre className="mt-3 bg-gray-900 text-gray-100 p-3 rounded-md overflow-auto text-xs">
+                            <code>{sub.code}</code>
+                          </pre>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })
+            ) : (
+              <div className="text-gray-400 text-sm">No subtasks defined for this task.</div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

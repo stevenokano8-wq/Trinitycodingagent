@@ -1,5 +1,6 @@
 import { FileNode } from "../src/types.js";
 import { AppEnv, resolveEnvWithOverrides, setRuntimeOverrides } from "./env.js";
+import { assertSafeRelativePath, maskSecrets } from "./security.js";
 
 // Workers have no filesystem and no `git`/`child_process` binary, so pushing
 // to GitHub can no longer shell out to a local git checkout. Instead this
@@ -107,6 +108,18 @@ export async function executeGitPush(
 
     let pushedCount = 0;
     for (const file of files) {
+      // Reject any file path that could escape the repo root or collide with
+      // an unintended location (parent traversal, absolute path, etc.)
+      // before it ever reaches the GitHub Contents API. File paths
+      // ultimately trace back to LLM-generated subtask names, so this is
+      // not a purely theoretical concern.
+      try {
+        assertSafeRelativePath(file.path);
+      } catch (pathErr: any) {
+        addLog(`[SKIPPED] Refusing to commit unsafe path "${file.path}": ${pathErr.message}`);
+        continue;
+      }
+
       addLog(`Committing ${file.path}...`);
 
       // Look up the existing file's SHA (required by the Contents API to
@@ -118,7 +131,7 @@ export async function executeGitPush(
         sha = existing.sha;
       } else if (getRes.status !== 404) {
         const body = await getRes.text();
-        addLog(`[WARN] Could not read existing file ${file.path} (${getRes.status}): ${body}`);
+        addLog(`[WARN] Could not read existing file ${file.path} (${getRes.status}): ${maskSecrets(body, [token])}`);
       }
 
       const putRes = await ghFetch(token, `${base}/contents/${encodeURIComponent(file.path)}`, {
@@ -133,7 +146,7 @@ export async function executeGitPush(
 
       if (!putRes.ok) {
         const body = await putRes.text();
-        throw new Error(`Failed to commit ${file.path}: ${putRes.status} ${body}`);
+        throw new Error(`Failed to commit ${file.path}: ${putRes.status} ${maskSecrets(body, [token])}`);
       }
       pushedCount++;
     }
@@ -141,8 +154,7 @@ export async function executeGitPush(
     addLog(`Workspace synchronized successfully with remote repository! (${pushedCount} file(s) committed)`);
     return { success: true, message: "Push successful", logs };
   } catch (err: any) {
-    let errorMsg = err.message || "Unknown GitHub sync error";
-    if (token) errorMsg = errorMsg.split(token).join("••••••••");
+    const errorMsg = maskSecrets(err.message || "Unknown GitHub sync error", [token]);
     addLog(`[ERROR] GitHub sync failed: ${errorMsg}`);
     return { success: false, message: errorMsg, logs };
   }

@@ -1,5 +1,7 @@
 import { Message, Task, Subtask, FileNode, DatabaseStatus } from "../src/types.js";
+import { logger } from "./logger.js";
 import { AppEnv, D1Database, resolveEnvWithOverrides } from "./env.js";
+import { isOversizedFileContent, MAX_FILE_CONTENT_BYTES } from "./security.js";
 
 // Local Node dev (`pnpm dev`) has no D1 binding available outside `wrangler
 // dev`, so it always uses this in-memory store. It is scoped to the current
@@ -61,7 +63,7 @@ export async function initDb(env?: Partial<AppEnv>): Promise<DatabaseStatus> {
   const resolved = resolveEnvWithOverrides(env);
 
   if (!resolved.DB) {
-    console.log("No D1 binding (DB) present. Falling back to in-memory persistence for this session.");
+    logger.info(`No D1 binding (DB) present, falling back to in-memory persistence for this session`);
     useLocalMemory = true;
     db = null;
     return { d1: "local_fallback", kv: "local_fallback" };
@@ -79,10 +81,10 @@ export async function initDb(env?: Partial<AppEnv>): Promise<DatabaseStatus> {
       // Column already exists or table doesn't exist yet, ignore
     }
     useLocalMemory = false;
-    console.log("Successfully connected to Cloudflare D1!");
+    logger.info(`Successfully connected to Cloudflare D1`);
     return { d1: "connected", kv: "local_fallback" };
   } catch (err: any) {
-    console.error("D1 initialization error, falling back to in-memory persistence:", err.message);
+    logger.error(`D1 initialization error, falling back to in-memory persistence`, { err: err.message });
     useLocalMemory = true;
     db = null;
     return { d1: "error", kv: "local_fallback" };
@@ -108,7 +110,7 @@ export async function getMessages(): Promise<Message[]> {
       attachment: row.attachment ? JSON.parse(row.attachment) : undefined,
     }));
   } catch (err) {
-    console.error("Failed to query messages from D1:", err);
+    logger.error(`Failed to query messages from D1`, { err: String(err) });
     return localDb.messages;
   }
 }
@@ -137,7 +139,7 @@ export async function addMessage(msg: Message): Promise<void> {
       )
       .run();
   } catch (err) {
-    console.error("Failed to insert message into D1:", err);
+    logger.error(`Failed to insert message into D1`, { err: String(err) });
     localDb.messages.push(msg);
   }
 }
@@ -150,7 +152,7 @@ export async function clearMessages(): Promise<void> {
   try {
     await db.prepare("DELETE FROM messages").run();
   } catch (err) {
-    console.error("Failed to clear messages from D1:", err);
+    logger.error(`Failed to clear messages from D1`, { err: String(err) });
   }
 }
 
@@ -190,7 +192,7 @@ export async function getTasks(): Promise<Task[]> {
       subtasks: subtasksByTask[row.id] || [],
     }));
   } catch (err) {
-    console.error("Failed to fetch tasks from D1:", err);
+    logger.error(`Failed to fetch tasks from D1`, { err: String(err) });
     return localDb.tasks;
   }
 }
@@ -231,7 +233,7 @@ export async function saveTask(task: Task): Promise<void> {
       }
     }
   } catch (err) {
-    console.error("Failed to upsert task in D1:", err);
+    logger.error(`Failed to upsert task in D1`, { taskId: task.id, err: String(err) });
   }
 }
 
@@ -244,7 +246,7 @@ export async function deleteTasks(): Promise<void> {
     await db.prepare("DELETE FROM subtasks").run();
     await db.prepare("DELETE FROM tasks").run();
   } catch (err) {
-    console.error("Failed to delete tasks from D1:", err);
+    logger.error(`Failed to delete tasks from D1`, { err: String(err) });
   }
 }
 
@@ -256,7 +258,7 @@ export async function getFiles(): Promise<FileNode[]> {
     const res = await db.prepare("SELECT * FROM files").all<any>();
     return (res.results || []).map((row) => ({ path: row.path, content: row.content, language: row.language }));
   } catch (err) {
-    console.error("Failed to fetch files from D1:", err);
+    logger.error(`Failed to fetch files from D1`, { err: String(err) });
     return localDb.files;
   }
 }
@@ -264,7 +266,17 @@ export async function getFiles(): Promise<FileNode[]> {
 export async function saveFile(file: FileNode): Promise<void> {
   // Workers have no filesystem: GitHub sync goes through the Contents API
   // directly from this D1/in-memory record (see server/github.ts) — this
-  // store is the single source of truth for files.
+  // store is the single source of truth for files. Guard against
+  // pathologically large content here too (defense in depth alongside the
+  // agent.ts truncation applied to LLM-generated files) since this is also
+  // reachable directly from the manual "save file" API route.
+  if (isOversizedFileContent(file.content)) {
+    logger.warn(`Saving file that exceeds recommended size guideline`, {
+      path: file.path,
+      sizeBytes: file.content.length,
+      maxBytes: MAX_FILE_CONTENT_BYTES,
+    });
+  }
   if (useLocalMemory || !db) {
     const idx = localDb.files.findIndex((f) => f.path === file.path);
     if (idx >= 0) localDb.files[idx] = file;
@@ -279,7 +291,7 @@ export async function saveFile(file: FileNode): Promise<void> {
       await db.prepare("INSERT INTO files (path, content, language) VALUES (?, ?, ?)").bind(file.path, file.content, file.language).run();
     }
   } catch (err) {
-    console.error("Failed to save file in D1:", err);
+    logger.error(`Failed to save file in D1`, { path: file.path, err: String(err) });
   }
 }
 
@@ -291,6 +303,6 @@ export async function clearFiles(): Promise<void> {
   try {
     await db.prepare("DELETE FROM files").run();
   } catch (err) {
-    console.error("Failed to clear files from D1:", err);
+    logger.error(`Failed to clear files from D1`, { err: String(err) });
   }
 }

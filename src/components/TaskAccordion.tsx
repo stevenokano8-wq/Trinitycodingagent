@@ -1,5 +1,5 @@
 import { API_BASE } from "../lib/api.ts";
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import { Task, Subtask } from "../types.js";
 import { 
   ChevronDown, 
@@ -253,12 +253,20 @@ const SubtaskAccordionItem = React.memo(function SubtaskAccordionItem({
   isLocked?: boolean;
 }) {
   const [isOpen, setIsOpen] = useState(!isLocked && (isInitiallyOpen || sub.status === "running" || sub.status === "failed"));
+  const terminalRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!isLocked && (sub.status === "running" || sub.status === "failed")) {
       setIsOpen(true);
     }
   }, [sub.status, isLocked]);
+
+  // Auto-scroll live terminal to bottom whenever new logs arrive
+  useEffect(() => {
+    if (terminalRef.current) {
+      terminalRef.current.scrollTop = terminalRef.current.scrollHeight;
+    }
+  }, [sub.logs]);
 
   const getStatusIcon = () => {
     if (isLocked) {
@@ -315,9 +323,54 @@ const SubtaskAccordionItem = React.memo(function SubtaskAccordionItem({
             className="overflow-hidden border-t border-slate-100 bg-slate-50/30"
           >
             <div className="p-4 space-y-3">
-              <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider font-mono mb-1 select-none flex items-center gap-1.5">
+              {/* LIVE STDOUT TERMINAL — auto-scrolls to latest log line */}
+              {sub.logs.length > 0 && (
+                <div className="rounded-xl border border-zinc-800 bg-zinc-950 overflow-hidden shadow-sm">
+                  <div className="flex items-center justify-between px-3 py-1.5 bg-zinc-900 border-b border-zinc-800">
+                    <div className="flex items-center gap-2">
+                      <Terminal className="h-3 w-3 text-emerald-400" />
+                      <span className="text-[9px] font-mono font-bold text-emerald-400 uppercase tracking-widest">
+                        Live stdout
+                      </span>
+                      {sub.status === "running" && (
+                        <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-ping" />
+                      )}
+                    </div>
+                    <span className="text-[9px] font-mono text-zinc-500">{sub.logs.length} lines</span>
+                  </div>
+                  <div
+                    ref={terminalRef}
+                    className="p-3 space-y-0.5 max-h-48 overflow-y-auto scrollbar-thin scrollbar-thumb-zinc-700"
+                    style={{ scrollBehavior: "smooth" }}
+                  >
+                    {sub.logs.map((line, idx) => {
+                      const isErr = line.toLowerCase().includes("error") || line.toLowerCase().includes("failed") || line.toLowerCase().includes("cancelled");
+                      const isSucc = line.toLowerCase().includes("[success]") || line.toLowerCase().includes("completed successfully");
+                      const isCmd = line.includes("cmd>");
+                      const isSys = line.includes("[SYSTEM]") || line.includes("[Sovereign Agent]");
+                      return (
+                        <div key={idx} className={`font-mono text-[10px] leading-relaxed break-all ${
+                          isErr ? "text-rose-400" :
+                          isSucc ? "text-emerald-400" :
+                          isCmd ? "text-amber-300 font-semibold" :
+                          isSys ? "text-blue-300" :
+                          "text-zinc-400"
+                        }`}>
+                          {line}
+                        </div>
+                      );
+                    })}
+                    {sub.status === "running" && (
+                      <div className="text-emerald-400 font-mono text-[10px] animate-pulse">█</div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Parsed Command Blocks */}
+              <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider font-mono select-none flex items-center gap-1.5">
                 <Terminal className="h-3 w-3 text-slate-400" />
-                <span>Command Executions & Action Logs ({blocks.length})</span>
+                <span>Command Executions ({blocks.length})</span>
               </div>
               <div className="space-y-2">
                 {blocks.map((block) => (
@@ -502,7 +555,7 @@ export default function TaskAccordion({
                   <SubtaskAccordionItem
                     key={sub.id}
                     sub={sub}
-                    isInitiallyOpen={sIdx === 0 || sub.status === "running" || sub.status === "failed"}
+                    isInitiallyOpen={sub.status === "running" || sub.status === "failed"}
                     isLocked={isSubtaskLocked}
                   />
                 );

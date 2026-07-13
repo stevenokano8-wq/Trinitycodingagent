@@ -1,629 +1,228 @@
-import { API_BASE } from "../lib/api.ts";
-import React, { useState, useEffect, useMemo, useRef } from "react";
+import React, { useState, useMemo } from "react";
 import { Task, Subtask } from "../types.js";
-import { 
-  ChevronDown, 
-  ChevronUp, 
-  CheckCircle2, 
-  XCircle, 
-  PlayCircle,
-  Loader2, 
-  Terminal, 
-  Copy, 
-  FileText, 
-  Lock 
-} from "lucide-react";
-import { motion, AnimatePresence } from "motion/react";
-
-interface CommandBlock {
-  id: string;
-  command: string;
-  isSystem: boolean;
-  status: "success" | "failed" | "info" | "running";
-  output: string[];
-}
-
-function parseLogsToCommandBlocks(logs: string[]): CommandBlock[] {
-  const blocks: CommandBlock[] = [];
-  let currentBlock: CommandBlock | null = null;
-
-  logs.forEach((log, idx) => {
-    const trimmed = log.trim();
-    if (trimmed.startsWith("cmd> ")) {
-      if (currentBlock) {
-        blocks.push(currentBlock);
-      }
-      const commandText = trimmed.replace("cmd> ", "");
-      currentBlock = {
-        id: `cmd-${idx}`,
-        command: commandText,
-        isSystem: false,
-        status: "info",
-        output: []
-      };
-    } else if (trimmed.startsWith("[Sovereign Agent]") || trimmed.startsWith("[INFO]") || trimmed.startsWith("[SYSTEM]") || trimmed.startsWith("[SUCCESS]")) {
-      if (trimmed.startsWith("[Sovereign Agent]") || trimmed.startsWith("[SYSTEM]")) {
-        if (currentBlock) {
-          blocks.push(currentBlock);
-        }
-        currentBlock = {
-          id: `sys-${idx}`,
-          command: trimmed,
-          isSystem: true,
-          status: trimmed.toLowerCase().includes("success") ? "success" : trimmed.toLowerCase().includes("failed") ? "failed" : "info",
-          output: []
-        };
-      } else {
-        if (currentBlock) {
-          currentBlock.output.push(log);
-        } else {
-          currentBlock = {
-            id: `log-${idx}`,
-            command: trimmed,
-            isSystem: true,
-            status: trimmed.toLowerCase().includes("success") ? "success" : trimmed.toLowerCase().includes("failed") ? "failed" : "info",
-            output: []
-          };
-        }
-      }
-    } else {
-      if (currentBlock) {
-        currentBlock.output.push(log);
-      } else {
-        currentBlock = {
-          id: `log-${idx}`,
-          command: "Initialize Execution Status",
-          isSystem: true,
-          status: "info",
-          output: [log]
-        };
-      }
-    }
-
-    if (currentBlock) {
-      const allText = (currentBlock.command + " " + currentBlock.output.join(" ")).toLowerCase();
-      if (allText.includes("failed") || allText.includes("error") || allText.includes("cancelled")) {
-        currentBlock.status = "failed";
-      } else if (allText.includes("success") || allText.includes("passed") || allText.includes("complete") || allText.includes("completed")) {
-        currentBlock.status = "success";
-      } else if (allText.includes("running") || allText.includes("loading") || allText.includes("executing")) {
-        currentBlock.status = "running";
-      }
-    }
-  });
-
-  if (currentBlock) {
-    blocks.push(currentBlock);
-  }
-
-  if (blocks.length === 0) {
-    blocks.push({
-      id: "empty",
-      command: "Staging and allocation",
-      isSystem: true,
-      status: "info",
-      output: ["Initialized subtask. Waiting for agent process allocation..."]
-    });
-  }
-
-  return blocks;
-}
-
-const CommandAccordionItem = React.memo(function CommandAccordionItem({ 
-  block, 
-  subtaskFile, 
-  subtaskCode 
-}: { 
-  block: CommandBlock; 
-  subtaskFile?: string; 
-  subtaskCode?: string;
-}) {
-  const [isOpen, setIsOpen] = useState(block.status === "running" || block.status === "failed");
-  const [copied, setCopied] = useState(false);
-
-  useEffect(() => {
-    if (block.status === "running" || block.status === "failed") {
-      setIsOpen(true);
-    }
-  }, [block.status]);
-
-  const getStatusColor = () => {
-    switch (block.status) {
-      case "success":
-        return "text-emerald-500 bg-emerald-50 border-emerald-200";
-      case "failed":
-        return "text-rose-500 bg-rose-50 border-rose-200 animate-pulse";
-      case "running":
-        return "text-blue-500 bg-blue-50 border-blue-200";
-      default:
-        return "text-slate-500 bg-slate-50 border-slate-200";
-    }
-  };
-
-  const getStatusIcon = () => {
-    switch (block.status) {
-      case "success":
-        return <CheckCircle2 className="h-4 w-4 text-emerald-500 shrink-0" />;
-      case "failed":
-        return <XCircle className="h-4 w-4 text-rose-500 shrink-0" />;
-      case "running":
-        return <Loader2 className="h-4 w-4 text-blue-500 shrink-0 animate-spin" />;
-      default:
-        return <PlayCircle className="h-4 w-4 text-slate-400 shrink-0" />;
-    }
-  };
-
-  const handleCopyCode = () => {
-    if (subtaskCode) {
-      navigator.clipboard.writeText(subtaskCode);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    }
-  };
-
-  return (
-    <div className="border border-slate-200 rounded-xl bg-white overflow-hidden shadow-3xs transition-all duration-200">
-      <button
-        type="button"
-        onClick={() => setIsOpen(!isOpen)}
-        className="w-full px-3 py-2.5 flex items-center justify-between text-left hover:bg-slate-50/50 transition-colors gap-3 cursor-pointer"
-      >
-        <div className="flex items-center gap-2 min-w-0 flex-1">
-          {getStatusIcon()}
-          <span className="text-[10px] font-mono font-semibold text-slate-400 shrink-0 select-none">
-            {block.isSystem ? "SYS" : "CMD>"}
-          </span>
-          <span className="text-xs font-mono font-medium text-slate-700 truncate">
-            {block.command}
-          </span>
-        </div>
-        <div className="flex items-center gap-1.5 shrink-0 select-none">
-          <span className={`text-[9px] font-bold font-mono px-1.5 py-0.5 rounded-md border uppercase ${getStatusColor()}`}>
-            {block.status}
-          </span>
-          {isOpen ? <ChevronUp className="h-3.5 w-3.5 text-slate-400" /> : <ChevronDown className="h-3.5 w-3.5 text-slate-400" />}
-        </div>
-      </button>
-
-      <AnimatePresence initial={false}>
-        {isOpen && (
-          <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: "auto", opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            className="overflow-hidden border-t border-slate-100 bg-slate-950 text-slate-200 font-mono text-[11px] text-left"
-          >
-            <div className="p-3.5 space-y-1.5 max-h-56 overflow-y-auto scrollbar-thin scrollbar-thumb-zinc-850">
-              {block.output.length === 0 ? (
-                <div className="text-zinc-500 italic select-none">No immediate output lines returned.</div>
-              ) : (
-                block.output.map((line, oIdx) => {
-                  const isErr = line.toLowerCase().includes("error") || line.toLowerCase().includes("failed") || line.toLowerCase().includes("cancelled");
-                  const isSucc = line.toLowerCase().includes("[success]");
-                  return (
-                    <div
-                      key={oIdx}
-                      className={`leading-relaxed break-all ${
-                        isErr ? "text-rose-400 font-semibold" :
-                        isSucc ? "text-emerald-400 font-semibold" : "text-zinc-300"
-                      }`}
-                    >
-                      {line}
-                    </div>
-                  );
-                })
-              )}
-
-              {subtaskCode && !block.isSystem && (
-                <div className="mt-3 bg-zinc-900 border border-zinc-800 rounded-lg p-2.5 flex flex-col select-none">
-                  <div className="flex items-center justify-between text-[9px] text-zinc-400 font-bold mb-1.5">
-                    <div className="flex items-center gap-1 truncate max-w-[70%]">
-                      <FileText className="h-3 w-3 text-zinc-500 shrink-0" />
-                      <span className="truncate">{subtaskFile || "src/generated/module.ts"}</span>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={handleCopyCode}
-                      className="flex items-center gap-1 text-zinc-400 hover:text-white bg-transparent border-none cursor-pointer transition-colors"
-                    >
-                      <Copy className="h-2.5 w-2.5" />
-                      {copied ? "Copied!" : "Copy"}
-                    </button>
-                  </div>
-                  <pre className="text-[10px] leading-relaxed text-zinc-400 bg-zinc-950/70 p-2 rounded border border-zinc-800 max-h-24 overflow-y-auto overflow-x-auto text-left whitespace-pre">
-                    {subtaskCode}
-                  </pre>
-                </div>
-              )}
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
-  );
-});
-
-const SubtaskAccordionItem = React.memo(function SubtaskAccordionItem({ 
-  sub, 
-  isInitiallyOpen,
-  isLocked = false
-}: { 
-  sub: Subtask; 
-  isInitiallyOpen: boolean;
-  isLocked?: boolean;
-}) {
-  const [isOpen, setIsOpen] = useState(!isLocked && (isInitiallyOpen || sub.status === "running" || sub.status === "failed"));
-  const terminalRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!isLocked && (sub.status === "running" || sub.status === "failed")) {
-      setIsOpen(true);
-    }
-  }, [sub.status, isLocked]);
-
-  // Auto-scroll live terminal to bottom whenever new logs arrive
-  useEffect(() => {
-    if (terminalRef.current) {
-      terminalRef.current.scrollTop = terminalRef.current.scrollHeight;
-    }
-  }, [sub.logs]);
-
-  const getStatusIcon = () => {
-    if (isLocked) {
-      return <Lock className="h-4 w-4 text-zinc-350 shrink-0" />;
-    }
-    switch (sub.status) {
-      case "completed":
-        return <CheckCircle2 className="h-4.5 w-4.5 text-emerald-500 shrink-0" />;
-      case "failed":
-        return <XCircle className="h-4.5 w-4.5 text-rose-500 shrink-0 animate-pulse" />;
-      case "running":
-        return <Loader2 className="h-4.5 w-4.5 text-blue-500 shrink-0 animate-spin" />;
-      default:
-        return <PlayCircle className="h-4.5 w-4.5 text-zinc-400 shrink-0 opacity-60" />;
-    }
-  };
-
-  const getStatusBg = () => {
-    if (isLocked) return "bg-zinc-50/50 hover:bg-zinc-50/55 border-zinc-150 text-zinc-400 cursor-not-allowed";
-    if (sub.status === "running") return "bg-blue-50/40 hover:bg-blue-50/60 border-blue-100 text-blue-950";
-    if (sub.status === "failed") return "bg-rose-50/40 hover:bg-rose-50/60 border-rose-100 text-rose-950";
-    if (sub.status === "completed") return "bg-emerald-50/10 hover:bg-emerald-50/20 border-emerald-100 text-slate-800";
-    return "hover:bg-slate-50 border-slate-200 text-slate-700";
-  };
-
-  const blocks = useMemo(() => parseLogsToCommandBlocks(sub.logs), [sub.logs]);
-
-  return (
-    <div className={`border border-slate-200 rounded-2xl bg-white shadow-2xs overflow-hidden transition-all duration-300 ${isLocked ? "opacity-75" : ""}`}>
-      <button
-        type="button"
-        disabled={isLocked}
-        onClick={() => setIsOpen(!isOpen)}
-        className={`w-full p-3.5 flex items-center justify-between text-left transition-colors border-none font-sans ${getStatusBg()}`}
-      >
-        <div className="flex items-center gap-3 min-w-0">
-          {getStatusIcon()}
-          <span className={`font-semibold text-xs truncate leading-snug ${isLocked ? "text-zinc-400" : ""}`}>{sub.name}</span>
-        </div>
-        <div className="flex items-center gap-2 shrink-0 select-none">
-          <span className="text-[10px] font-mono font-bold opacity-65 uppercase tracking-wider bg-slate-100 px-2 py-0.5 rounded border border-slate-200/50">
-            {isLocked ? "LOCKED" : sub.status}
-          </span>
-          {!isLocked && (isOpen ? <ChevronUp className="h-4 w-4 text-slate-400" /> : <ChevronDown className="h-4 w-4 text-slate-400" />)}
-        </div>
-      </button>
-
-      <AnimatePresence initial={false}>
-        {isOpen && (
-          <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: "auto", opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            className="overflow-hidden border-t border-slate-100 bg-slate-50/30"
-          >
-            <div className="p-4 space-y-3">
-              {/* LIVE STDOUT TERMINAL — auto-scrolls to latest log line */}
-              {sub.logs.length > 0 && (
-                <div className="rounded-xl border border-zinc-800 bg-zinc-950 overflow-hidden shadow-sm">
-                  <div className="flex items-center justify-between px-3 py-1.5 bg-zinc-900 border-b border-zinc-800">
-                    <div className="flex items-center gap-2">
-                      <Terminal className="h-3 w-3 text-emerald-400" />
-                      <span className="text-[9px] font-mono font-bold text-emerald-400 uppercase tracking-widest">
-                        Live stdout
-                      </span>
-                      {sub.status === "running" && (
-                        <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-ping" />
-                      )}
-                    </div>
-                    <span className="text-[9px] font-mono text-zinc-500">{sub.logs.length} lines</span>
-                  </div>
-                  <div
-                    ref={terminalRef}
-                    className="p-3 space-y-0.5 max-h-48 overflow-y-auto scrollbar-thin scrollbar-thumb-zinc-700"
-                    style={{ scrollBehavior: "smooth" }}
-                  >
-                    {sub.logs.map((line, idx) => {
-                      const isErr = line.toLowerCase().includes("error") || line.toLowerCase().includes("failed") || line.toLowerCase().includes("cancelled");
-                      const isSucc = line.toLowerCase().includes("[success]") || line.toLowerCase().includes("completed successfully");
-                      const isCmd = line.includes("cmd>");
-                      const isSys = line.includes("[SYSTEM]") || line.includes("[Sovereign Agent]");
-                      return (
-                        <div key={idx} className={`font-mono text-[10px] leading-relaxed break-all ${
-                          isErr ? "text-rose-400" :
-                          isSucc ? "text-emerald-400" :
-                          isCmd ? "text-amber-300 font-semibold" :
-                          isSys ? "text-blue-300" :
-                          "text-zinc-400"
-                        }`}>
-                          {line}
-                        </div>
-                      );
-                    })}
-                    {sub.status === "running" && (
-                      <div className="text-emerald-400 font-mono text-[10px] animate-pulse">█</div>
-                    )}
-                  </div>
-                </div>
-              )}
-
-              {/* Parsed Command Blocks */}
-              <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider font-mono select-none flex items-center gap-1.5">
-                <Terminal className="h-3 w-3 text-slate-400" />
-                <span>Command Executions ({blocks.length})</span>
-              </div>
-              <div className="space-y-2">
-                {blocks.map((block) => (
-                  <CommandAccordionItem
-                    key={block.id}
-                    block={block}
-                    subtaskFile={sub.file}
-                    subtaskCode={sub.code}
-                  />
-                ))}
-              </div>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
-  );
-});
+import { ChevronDown, ChevronRight, CheckCircle, RefreshCw, Clock, Copy, Terminal, Play } from "lucide-react";
 
 interface TaskAccordionProps {
-  task: Task;
-  isInitiallyExpanded?: boolean;
-  isLocked?: boolean;
-  taskIndex?: number;
+  tasks: Task[];
+  // Optional callbacks so parent can react to user actions
+  onCancelTask?: (taskId: string) => void;
+  onOpenSubtask?: (taskId: string, subtaskIndex: number) => void;
 }
 
-export default function TaskAccordion({ 
-  task, 
-  isInitiallyExpanded = false, 
-  isLocked = false, 
-  taskIndex = 1 
-}: TaskAccordionProps) {
-  const [isExpanded, setIsExpanded] = useState(isInitiallyExpanded || task.status === "running");
+function Spinner({ size = 14 }: { size?: number }) {
+  return <RefreshCw className={`h-${size} w-${size} animate-spin text-amber-400`} />;
+}
 
-  useEffect(() => {
-    if (task.status === "running" || task.status === "failed") {
-      setIsExpanded(true);
+function extractLatestStepDescription(sub: Subtask): string | null {
+  // Heuristic: treat logs that start with "STEP" or contain "step:" as step markers
+  for (let i = sub.logs.length - 1; i >= 0; i--) {
+    const l = sub.logs[i];
+    if (!l) continue;
+    const normalized = l.toLowerCase();
+    if (normalized.startsWith("step") || normalized.includes("step:") || normalized.startsWith("[step]") ) {
+      // Trim any leading marker and return human-friendly text
+      return l.replace(/^\[?step\]?[:\-\s]*/i, "").trim();
     }
-  }, [task.status]);
+  }
+  return null;
+}
 
-  const [elapsedTime, setElapsedTime] = useState("00:00");
+function isStepLog(line: string) {
+  if (!line) return false;
+  const l = line.toLowerCase();
+  return l.startsWith("step") || l.startsWith("[step]") || l.includes("step:");
+}
 
-  const formatDuration = (ms: number) => {
-    const totalSeconds = Math.floor(ms / 1000);
-    const minutes = Math.floor(totalSeconds / 60);
-    const seconds = totalSeconds % 60;
-    return `${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`;
+export default function TaskAccordion({ tasks, onCancelTask, onOpenSubtask }: TaskAccordionProps) {
+  const [openTaskId, setOpenTaskId] = useState<string | null>(null);
+  const [openSubtask, setOpenSubtask] = useState<Record<string, number | null>>({});
+
+  const toggleTask = (id: string) => setOpenTaskId((cur) => (cur === id ? null : id));
+  const toggleSubtask = (taskId: string, idx: number) => {
+    setOpenSubtask((prev) => ({ ...prev, [taskId]: prev[taskId] === idx ? null : idx }));
+    onOpenSubtask?.(taskId, idx);
   };
 
-  useEffect(() => {
-    if (task.status !== "running" || !task.startedAt) {
-      if ((task.status === "completed" || task.status === "failed") && task.startedAt && task.completedAt) {
-        const diff = new Date(task.completedAt).getTime() - new Date(task.startedAt).getTime();
-        setElapsedTime(formatDuration(diff > 0 ? diff : 0));
-      } else {
-        setElapsedTime("00:00");
-      }
-      return;
-    }
-
-    const start = new Date(task.startedAt).getTime();
-    const interval = setInterval(() => {
-      const diff = Date.now() - start;
-      setElapsedTime(formatDuration(diff > 0 ? diff : 0));
-    }, 100);
-
-    return () => clearInterval(interval);
-  }, [task.status, task.startedAt, task.completedAt]);
-
-  const handleCancel = async (e: React.MouseEvent) => {
-    e.stopPropagation();
-    try {
-      await fetch(`${API_BASE}/api/tasks/cancel`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ taskId: task.id })
-      });
-    } catch (err) {
-      console.error("Failed to cancel task flow:", err);
-    }
-  };
-
-  const getAggregatedBadge = () => {
-    const hasFailed = task.subtasks.some(s => s.status === "failed") || task.status === "failed";
-    const isRunning = task.status === "running";
-    const isCompleted = task.status === "completed";
-
-    if (hasFailed) {
-      return (
-        <span className="bg-rose-50 text-rose-600 border border-rose-200 text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1">
-          <span className="h-1 w-1 rounded-full bg-rose-500 animate-pulse" />
-          Failed / Aborted
-        </span>
-      );
-    }
-    if (isRunning) {
-      return (
-        <span className="bg-blue-50 text-blue-600 border border-blue-200 text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1 animate-pulse">
-          <Loader2 className="h-2.5 w-2.5 animate-spin text-blue-500" />
-          Running
-        </span>
-      );
-    }
-    if (isCompleted) {
-      return (
-        <span className="bg-emerald-50 text-emerald-600 border border-emerald-200 text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1">
-          <span className="h-1 w-1 rounded-full bg-emerald-500" />
-          Completed
-        </span>
-      );
-    }
+  if (!tasks || tasks.length === 0) {
     return (
-      <span className="bg-zinc-50 text-zinc-400 border border-zinc-200 text-[10px] font-bold px-2 py-0.5 rounded-full">
-        Pending
-      </span>
+      <div className="p-4 text-sm text-gray-500 font-mono">No tasks available.</div>
     );
-  };
+  }
 
   return (
-    <div className={`w-full font-sans border border-zinc-200 rounded-2xl bg-white shadow-xs overflow-hidden transition-all duration-300 ${
-      isLocked ? "opacity-60 cursor-not-allowed select-none" : ""
-    }`}>
-      {/* A. HEADER BAR */}
-      <div 
-        onClick={() => !isLocked && setIsExpanded(!isExpanded)}
-        className={`w-full p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 select-none text-left transition-colors ${
-          isLocked ? "bg-zinc-50" : "hover:bg-zinc-50/50 cursor-pointer"
-        }`}
-      >
-        <div className="flex items-center gap-3 min-w-0">
-          <span className="font-mono text-zinc-500 font-bold shrink-0 text-xs tracking-wider bg-zinc-100 px-2 py-0.5 rounded border border-zinc-250/50">
-            [Task-{taskIndex}]
-          </span>
-          <h4 className="font-semibold text-zinc-800 text-sm truncate pr-2">
-            {task.name}
-          </h4>
-        </div>
+    <div className="space-y-3">
+      {tasks.map((task) => {
+        const isOpen = openTaskId === task.id;
+        const subtaskCount = task.subtasks?.length || 0;
+        const currentSub = task.subtasks?.[task.activeSubtaskIndex] ?? null;
+        const currentStepDesc = currentSub ? extractLatestStepDescription(currentSub) : null;
 
-        <div className="flex items-center flex-wrap gap-2.5 shrink-0 self-end sm:self-auto">
-          {getAggregatedBadge()}
+        return (
+          <div key={task.id} className="bg-white border border-gray-100 rounded-2xl shadow-xs overflow-hidden">
+            {/* Header */}
+            <div className="p-3.5 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-3 min-w-0">
+                <button
+                  aria-expanded={isOpen}
+                  onClick={() => toggleTask(task.id)}
+                  className="p-2 rounded-md hover:bg-gray-50 text-gray-700"
+                  title={isOpen ? "Collapse" : "Expand"}
+                >
+                  {isOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                </button>
 
-          {(task.status === "running" || task.status === "completed" || task.status === "failed") && (
-            <span className="text-[10px] font-mono font-bold text-zinc-500 bg-zinc-100 border border-zinc-200 px-2 py-0.5 rounded-md">
-              ⏱ {elapsedTime}
-            </span>
-          )}
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <div className="text-sm font-bold text-gray-800 truncate" title={task.name}>{task.name}</div>
 
-          {task.status === "running" && (
-            <button
-              type="button"
-              onClick={handleCancel}
-              className="text-[10px] font-bold text-rose-600 bg-rose-50 border border-rose-200 px-2.5 py-0.5 rounded-md hover:bg-rose-600 hover:text-white hover:border-rose-600 cursor-pointer transition-all"
-            >
-              Cancel
-            </button>
-          )}
+                    {/* N steps badge pill */}
+                    <div className="ml-1 text-[11px] bg-gray-100 text-gray-700 px-2 py-0.5 rounded-full font-mono">
+                      {subtaskCount} steps
+                    </div>
 
-          {isLocked ? (
-            <Lock className="h-3.5 w-3.5 text-zinc-400 shrink-0 ml-1" />
-          ) : (
-            <div className="text-zinc-400 hover:text-zinc-600 transition-colors shrink-0 ml-1">
-              {isExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                    {/* status indicator: spinner + color when running, check when completed */}
+                    <div className="ml-2">
+                      {task.status === "running" ? (
+                        <div className="flex items-center gap-1 text-amber-400">
+                          <RefreshCw className="h-4 w-4 animate-spin text-amber-400" />
+                          <span className="sr-only">Running</span>
+                        </div>
+                      ) : task.status === "completed" ? (
+                        <CheckCircle className="h-4 w-4 text-emerald-500" />
+                      ) : (
+                        <Clock className="h-4 w-4 text-gray-400" />
+                      )}
+                    </div>
+
+                  </div>
+
+                  {/* current step description chip (latest step) */}
+                  {currentStepDesc && (
+                    <div className="mt-1 text-[12px] text-gray-500 truncate max-w-[48rem] font-mono">
+                      <span className="inline-block bg-gray-50 px-2 py-0.5 rounded-md text-[11px] text-gray-600">{currentStepDesc}</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex items-center gap-3">
+                <div className="text-xs text-gray-500 font-mono">{task.progress}%</div>
+                <div>
+                  {/* Cancel button if running */}
+                  {task.status === "running" && (
+                    <button
+                      id={`btn-cancel-${task.id}`}
+                      onClick={() => onCancelTask?.(task.id)}
+                      className="text-[11px] bg-rose-50 text-rose-600 px-2 py-1 rounded-xl font-bold hover:bg-rose-100"
+                    >
+                      Cancel
+                    </button>
+                  )}
+                </div>
+              </div>
             </div>
-          )}
-        </div>
-      </div>
 
-      {/* B. DETAIL CONTENT SPECIFICATION (Nested Accordions View) */}
-      <AnimatePresence initial={false}>
-        {isExpanded && !isLocked && task.subtasks.length > 0 && (
-          <motion.div
-            initial={{ height: 0 }}
-            animate={{ height: "auto" }}
-            exit={{ height: 0 }}
-            transition={{ duration: 0.25, ease: "easeInOut" }}
-            className="overflow-hidden border-t border-zinc-150"
-          >
-            <div className="p-4 flex flex-col gap-3.5 bg-slate-50/40">
-              {task.subtasks.map((sub, sIdx) => {
-                const isSubtaskLocked = isLocked || sIdx > task.activeSubtaskIndex || (task.status === "pending" && sIdx > 0);
-                return (
-                  <SubtaskAccordionItem
-                    key={sub.id}
-                    sub={sub}
-                    isInitiallyOpen={sub.status === "running" || sub.status === "failed"}
-                    isLocked={isSubtaskLocked}
-                  />
-                );
-              })}
+            {/* Expanded content */}
+            {isOpen && (
+              <div className="border-t border-gray-100">
+                <div className="p-3 space-y-3">
+                  {/* Subtasks list */}
+                  {task.subtasks && task.subtasks.length > 0 ? (
+                    <div className="space-y-2">
+                      {task.subtasks.map((sub, sIdx) => {
+                        const subOpen = openSubtask[task.id] === sIdx;
+                        const latestStep = extractLatestStepDescription(sub);
+                        return (
+                          <div key={sub.id} className="bg-gray-50 border border-gray-100 rounded-xl overflow-hidden">
+                            <div className="p-3 flex items-start justify-between gap-3">
+                              <div className="flex items-start gap-3 min-w-0">
+                                <button
+                                  onClick={() => toggleSubtask(task.id, sIdx)}
+                                  className="p-1.5 rounded-md hover:bg-gray-100 text-gray-700"
+                                >
+                                  {subOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                                </button>
 
-              {task.status === "completed" && (
-                <PhaseSummarySubAccordion 
-                  taskIndex={taskIndex} 
-                  taskName={task.name} 
-                />
-              )}
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+                                <div className="min-w-0">
+                                  <div className="flex items-center gap-2">
+                                    <div className="text-sm font-semibold text-gray-800 truncate" title={sub.name}>{sub.name}</div>
+
+                                    <div className="text-[11px] bg-white px-2 py-0.5 rounded-full text-gray-600 border border-gray-100 font-mono">
+                                      {sub.logs?.filter(Boolean).length ?? 0} steps
+                                    </div>
+                                  </div>
+
+                                  {latestStep && (
+                                    <div className="mt-1 text-[12px] text-gray-500 truncate font-mono">
+                                      <span className="inline-block bg-white/30 px-2 py-0.5 rounded-sm">{latestStep}</span>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+
+                              <div className="flex items-center gap-2">
+                                <button
+                                  onClick={() => navigator.clipboard?.writeText(sub.code ?? "")}
+                                  className="text-xs text-gray-500 hover:text-gray-800 px-2 py-1 rounded-md"
+                                  title="Copy code snippet"
+                                >
+                                  <Copy className="h-4 w-4" />
+                                </button>
+                                <button
+                                  onClick={() => navigator.clipboard?.writeText(sub.logs?.join("\n") ?? "")}
+                                  className="text-xs text-gray-500 hover:text-gray-800 px-2 py-1 rounded-md"
+                                  title="Copy logs"
+                                >
+                                  <Terminal className="h-4 w-4" />
+                                </button>
+                              </div>
+                            </div>
+
+                            {/* Subtask expanded logs */}
+                            {subOpen && (
+                              <div className="p-3 border-t border-gray-100 bg-white">
+                                <div className="space-y-2 text-sm font-mono text-gray-700">
+                                  {sub.logs && sub.logs.length > 0 ? (
+                                    sub.logs.map((l, li) => {
+                                      if (isStepLog(l)) {
+                                        // Render a step divider with label
+                                        const label = l.replace(/^\[?step\]?[:\-\s]*/i, "");
+                                        return (
+                                          <div key={li} className="py-2">
+                                            <div className="text-[12px] font-bold text-gray-600 uppercase tracking-wider border-b border-gray-100 pb-1">{label}</div>
+                                          </div>
+                                        );
+                                      }
+                                      return (
+                                        <div key={li} className="py-1 text-[13px] text-gray-700 break-words">{l}</div>
+                                      );
+                                    })
+                                  ) : (
+                                    <div className="text-gray-500">No logs for this step yet.</div>
+                                  )}
+                                </div>
+
+                                {/* Code block preview */}
+                                {sub.code && (
+                                  <pre className="mt-3 bg-gray-900 text-gray-100 p-3 rounded-md overflow-auto text-xs">
+                                    <code>{sub.code}</code>
+                                  </pre>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div className="text-gray-500">No subtasks defined for this task.</div>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
-
-const PhaseSummarySubAccordion = React.memo(function PhaseSummarySubAccordion({ 
-  taskIndex, 
-  taskName 
-}: { 
-  taskIndex: number; 
-  taskName: string;
-}) {
-  const [isOpen, setIsOpen] = useState(false);
-
-  return (
-    <div className="border border-emerald-150 rounded-2xl bg-emerald-50/5 overflow-hidden transition-all duration-300">
-      <button
-        type="button"
-        onClick={() => setIsOpen(!isOpen)}
-        className="w-full p-3.5 flex items-center justify-between text-left transition-colors border-none font-sans bg-emerald-50/25 hover:bg-emerald-50/35 text-emerald-950"
-      >
-        <div className="flex items-center gap-3 min-w-0">
-          <CheckCircle2 className="h-4.5 w-4.5 text-emerald-600 shrink-0" />
-          <span className="font-semibold text-xs truncate leading-snug">Summary of Phase {taskIndex}</span>
-        </div>
-        <div className="flex items-center gap-2 shrink-0 select-none">
-          <span className="text-[9px] font-mono font-bold text-emerald-600 bg-emerald-100/50 px-2 py-0.5 rounded border border-emerald-200/40">
-            SUMMARY
-          </span>
-          {isOpen ? <ChevronUp className="h-4 w-4 text-emerald-600" /> : <ChevronDown className="h-4 w-4 text-emerald-600" />}
-        </div>
-      </button>
-
-      <AnimatePresence initial={false}>
-        {isOpen && (
-          <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: "auto", opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            className="overflow-hidden border-t border-emerald-100 bg-emerald-50/10"
-          >
-            <div className="p-4 text-xs space-y-2 text-slate-700 leading-relaxed font-sans text-left">
-              <p className="font-medium text-emerald-900">✨ Phase {taskIndex} ("{taskName}") successfully executed and verified!</p>
-              <ul className="list-disc pl-4 space-y-1 mt-1 text-slate-600">
-                <li>All subtasks compiled safely inside the isolated container workspace.</li>
-                <li>Zero syntax errors, correct indentation, and static types validated.</li>
-                <li>Live component and asset tree updated in the rendering layers.</li>
-              </ul>
-              <p className="text-[10px] text-slate-400 font-mono mt-2">Verified compliance with Phase {taskIndex} progressive disclosure bounds.</p>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
-  );
-});
-

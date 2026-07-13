@@ -3,6 +3,15 @@ main = "server/worker.ts"
 compatibility_date = "2026-07-11"
 compatibility_flags = ["nodejs_compat"]
 
+# Wrangler 4 inherits the [assets] section from wrangler.toml (the frontend
+# config) even when deployed with --config wrangler.api.toml.  Without this
+# override, Cloudflare's Static Assets layer intercepts every request before
+# Hono runs (run_worker_first defaults to false) and returns "Not found" for
+# any path that has no matching static file — breaking all API routes.
+# Setting run_worker_first = true ensures Hono always executes first.
+[assets]
+run_worker_first = true
+
 # Custom domain for the production API. Cloudflare issues/manages the
 # certificate automatically once the zone (trinityuniverse.org) is active.
 [[routes]]

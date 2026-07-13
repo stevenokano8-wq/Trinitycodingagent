@@ -519,6 +519,41 @@ export default function App() {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, tasks]);
 
+  // Polling fallback: when a build is active, poll files + tasks every 5 s so
+  // the Code view stays in sync even if SSE misses a broadcast (isolate split).
+  useEffect(() => {
+    const hasActiveBuild = tasks.some(t => t.status === "running");
+    if (!hasActiveBuild) return;
+    const pollInterval = setInterval(async () => {
+      try {
+        const [fileRes, taskRes] = await Promise.all([
+          fetch(`${API_BASE}/api/files`),
+          fetch(`${API_BASE}/api/tasks`)
+        ]);
+        if (fileRes.ok) {
+          const fileData = await fileRes.json();
+          if (Array.isArray(fileData) && fileData.length > 0) setFiles(fileData);
+        }
+        if (taskRes.ok) {
+          const taskData = await taskRes.json();
+          if (Array.isArray(taskData)) {
+            setTasks(prev => {
+              const incoming = taskData as typeof tasks;
+              const merged = [...prev];
+              for (const t of incoming) {
+                const idx = merged.findIndex(p => p.id === t.id);
+                if (idx >= 0) merged[idx] = t;
+                else merged.push(t);
+              }
+              return merged;
+            });
+          }
+        }
+      } catch (_) {}
+    }, 5000);
+    return () => clearInterval(pollInterval);
+  }, [tasks.some(t => t.status === "running")]);
+
   const fetchInitialData = async () => {
     try {
       // 1. Fetch DB Statuses
@@ -1253,11 +1288,6 @@ export default function App() {
 
                   {/* Unified Feed Scroll Area */}
                   <div className="flex-1 overflow-y-auto space-y-6 pr-1.5 scrollbar-thin pb-4">
-                    {/* 1. GLOBAL BLUEPRINT: COLLAPSIBLE MASTER PLAN ACCORDION (Phase 1) */}
-                    {tasks.length > 0 && (
-                      <MasterPlanAccordion tasks={tasks} />
-                    )}
-
                     {timeline.map((item, index) => {
                       if (item.type === "message") {
                         const msg = item.data;

@@ -48,3 +48,17 @@ jobs:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           command: deploy --config wrangler.api.toml
+
+      # Re-pin the custom domain → worker binding after every deploy.
+      # Cloudflare drops this binding on each fresh wrangler deploy, so we
+      # must re-create it via the Workers Domains API to keep
+      # agent-api.trinityuniverse.org routed to sovereign-agent-api.
+      - name: Re-bind sovereign-agent-api custom domain
+        run: |
+          curl -s -X PUT \
+            "https://api.cloudflare.com/client/v4/accounts/${{ secrets.CLOUDFLARE_ACCOUNT_ID }}/workers/domains" \
+            -H "Authorization: Bearer ${{ secrets.CLOUDFLARE_API_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d '{"service":"sovereign-agent-api","zone_id":"3b68b597a92d1e970af9aab1d0f6e91e","hostname":"agent-api.trinityuniverse.org","environment":"production"}' \
+            | node -e "const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')); process.exit(d.success ? 0 : 1)"
+          echo "✅ Custom domain binding restored: agent-api.trinityuniverse.org → sovereign-agent-api"

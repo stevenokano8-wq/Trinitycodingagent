@@ -1,5 +1,7 @@
 import { Message, Task, Subtask, FileNode, DatabaseStatus } from "../src/types.js";
 import { AppEnv, D1Database, resolveEnvWithOverrides } from "./env.js";
+import * as fs from "fs";
+import * as path from "path";
 
 // Local Node dev (`pnpm dev`) has no D1 binding available outside `wrangler
 // dev`, so it always uses this in-memory store. It is scoped to the current
@@ -262,24 +264,46 @@ export async function getFiles(): Promise<FileNode[]> {
 }
 
 export async function saveFile(file: FileNode): Promise<void> {
-  // Workers have no filesystem: GitHub sync goes through the Contents API
-  // directly from this D1/in-memory record (see server/github.ts) — this
-  // store is the single source of truth for files.
+  // 1. Virtual Database & In-Memory Synchronization
   if (useLocalMemory || !db) {
     const idx = localDb.files.findIndex((f) => f.path === file.path);
-    if (idx >= 0) localDb.files[idx] = file;
-    else localDb.files.push(file);
-    return;
-  }
-  try {
-    const check = await db.prepare("SELECT path FROM files WHERE path = ?").bind(file.path).first();
-    if (check) {
-      await db.prepare("UPDATE files SET content = ?, language = ? WHERE path = ?").bind(file.content, file.language, file.path).run();
+    if (idx >= 0) {
+      localDb.files[idx] = file;
     } else {
-      await db.prepare("INSERT INTO files (path, content, language) VALUES (?, ?, ?)").bind(file.path, file.content, file.language).run();
+      localDb.files.push(file);
     }
-  } catch (err) {
-    console.error("Failed to save file in D1:", err);
+  } else {
+    try {
+      const check = await db.prepare("SELECT path FROM files WHERE path = ?").bind(file.path).first();
+      if (check) {
+        await db.prepare("UPDATE files SET content = ?, language = ? WHERE path = ?").bind(file.content, file.language, file.path).run();
+      } else {
+        await db.prepare("INSERT INTO files (path, content, language) VALUES (?, ?, ?)").bind(file.path, file.content, file.language).run();
+      }
+    } catch (err) {
+      console.error("Failed to save file in D1:", err);
+    }
+  }
+
+  // 2. Physical File System Write (Only active when Node filesystem APIs are available)
+  try {
+    if (typeof process !== "undefined" && process.cwd && fs && fs.writeFileSync) {
+      const rootPath = process.cwd();
+      const resolvedPath = path.resolve(rootPath, file.path);
+      const targetDir = path.dirname(resolvedPath);
+
+      // Verify write boundary to avoid writing outside of working directory
+      if (resolvedPath.startsWith(rootPath)) {
+        if (!fs.existsSync(targetDir)) {
+          fs.mkdirSync(targetDir, { recursive: true });
+        }
+        fs.writeFileSync(resolvedPath, file.content, "utf8");
+        console.log(`[Local Workspace] Physically wrote file to: ${file.path}`);
+      }
+    }
+  } catch (fsErr: any) {
+    // Fail silently inside purely isolated environments (e.g., edge runtimes)
+    console.warn(`[Local Workspace Sync Warning] Bypassed physical write for ${file.path}:`, fsErr.message);
   }
 }
 

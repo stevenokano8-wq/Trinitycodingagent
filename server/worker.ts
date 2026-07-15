@@ -70,8 +70,19 @@ app.post("/api/messages", async (c) => {
     await addMessage(userMsg);
 
     if (userMsg.role === "user") {
+      let plannedTasks: Task[] = [];
+      
+      c.req.raw.signal?.addEventListener("abort", () => {
+        console.warn("Client aborted request POST /api/messages - starting cleanup");
+        if (plannedTasks && plannedTasks.length > 0) {
+          for (const task of plannedTasks) {
+            cancelActiveBuild(task.id);
+          }
+        }
+      });
+
       try {
-        const plannedTasks = await planBuildTasks(content, c.env, attachment);
+        plannedTasks = await planBuildTasks(content, c.env, attachment);
         for (const task of plannedTasks) {
           if (!userMsg.taskId) userMsg.taskId = task.id;
           await saveTask(task);
@@ -106,7 +117,53 @@ app.post("/api/messages", async (c) => {
 
         return c.json({ message: userMsg, tasks: plannedTasks });
       } catch (agentErr: any) {
-        console.error("Agent planning error:", agentErr);
+        console.error("Agent planning failed, initializing fallback dead task state:", agentErr);
+        
+        // Ensure database state is updated with a dead task so the UI does not sit spinning forever
+        const failTaskId = `task-${Date.now()}-failed`;
+        const failedTask: Task = {
+          id: failTaskId,
+          name: "Analyze Task Plan",
+          status: "failed",
+          progress: 0,
+          activeSubtaskIndex: 0,
+          createdAt: new Date().toISOString(),
+          completedAt: new Date().toISOString(),
+          subtasks: [
+            {
+              id: `${failTaskId}-sub-0`,
+              taskId: failTaskId,
+              name: "Generate task planning blocks",
+              status: "failed",
+              logs: [`[FATAL ERROR] Planning failed: ${agentErr.message || agentErr}`]
+            }
+          ]
+        };
+        
+        userMsg.taskId = failTaskId;
+        try {
+          await saveTask(failedTask);
+        } catch (dbErr) {
+          console.error("Failed to save failed task block to database:", dbErr);
+        }
+
+        const failAssistantMsg: Message = {
+          id: `msg-${Date.now()}-finish`,
+          role: "assistant",
+          content: `### Sovereign Agent Task Report: FAILED\n\nFailed to plan build tasks: \`${agentErr.message || agentErr}\``,
+          timestamp: new Date().toISOString(),
+          actionsTaken: [],
+          thoughtTimeSeconds: 0,
+          modelName: "Error Flow",
+          durationSeconds: 0
+        };
+        try {
+          await addMessage(failAssistantMsg);
+          broadcastSSE("build-finished", failAssistantMsg);
+        } catch (msgErr) {
+          console.error("Failed to post finish failure message to channel:", msgErr);
+        }
+
         return c.json({ message: userMsg, error: agentErr.message });
       }
     }

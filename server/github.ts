@@ -141,8 +141,8 @@ export async function executeGitPush(
     addLog(`Workspace synchronized successfully with remote repository! (${pushedCount} file(s) committed)`);
     return { success: true, message: "Push successful", logs };
   } catch (err: any) {
-    let errorMsg = err.message || "Unknown GitHub sync error";
-    if (token) errorMsg = errorMsg.split(token).join("••••••••");
+    let errorMsg = err?.message || "Unknown GitHub sync error";
+    if (token && typeof errorMsg === "string") errorMsg = errorMsg.split(token).join("••••••••");
     addLog(`[ERROR] GitHub sync failed: ${errorMsg}`);
     return { success: false, message: errorMsg, logs };
   }

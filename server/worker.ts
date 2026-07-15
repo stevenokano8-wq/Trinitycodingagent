@@ -13,7 +13,7 @@ import { initCache, cacheFlush } from "./cache.js";
 import { planBuildTasks, executeAgentBuild, sseClients, broadcastSSE, cancelActiveBuild } from "./agent.js";
 import { getGithubConfig, saveGithubConfig, executeGitPush } from "./github.js";
 import { AppEnv, setRuntimeOverrides, resolveEnvWithOverrides } from "./env.js";
-import { DatabaseStatus, Message, FileNode } from "../src/types.js";
+import { DatabaseStatus, Message, FileNode, Task } from "../src/types.js";
 
 type Bindings = AppEnv;
 

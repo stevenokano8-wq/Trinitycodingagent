@@ -19,7 +19,7 @@ type Bindings = AppEnv;
 
 const app = new Hono<{ Bindings: Bindings }>();
 
-app.use("*", cors());
+app.use("*", cors({ origin: ["https://agent.trinityuniverse.org", "http://localhost:5173", "http://localhost:3000"], allowHeaders: ["Content-Type", "Authorization"], allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"], credentials: true }));
 
 let dbStatus: DatabaseStatus = { d1: "local_fallback", kv: "local_fallback" };
 let initialized = false;
@@ -396,49 +396,99 @@ app.post("/api/github/push", async (c) => {
   }
 });
 
-// Server-Sent Events over a Worker fetch response: build a TransformStream
-// and register its writer in the same `sseClients` set that agent.ts's
-// broadcastSSE() already writes to via `.write(...)`. Known limitation
-// (accepted scope): this only fans out to clients connected to the same
-// isolate that handles the broadcast — there's no cross-isolate pub/sub here.
-app.get("/api/tasks/stream", (c) => {
+// Server-Sent Events — uses D1 polling so it works regardless of which
+// Cloudflare Worker isolate handles the SSE connection vs the POST /api/messages.
+// Every 1.5 s this reads the latest task + message state from D1 and emits
+// delta events to the connected client. No shared in-memory state needed.
+app.get("/api/tasks/stream", async (c) => {
+  await ensureInit(c.env);
+
   const { readable, writable } = new TransformStream();
   const writer = writable.getWriter();
   const encoder = new TextEncoder();
+  let closed = false;
 
-  const client = {
-    write: (chunk: string) => {
-      writer.write(encoder.encode(chunk)).catch(() => {
-        sseClients.delete(client);
-      });
-    },
+  const write = (chunk: string) => {
+    if (closed) return;
+    writer.write(encoder.encode(chunk)).catch(() => { closed = true; });
   };
 
-  sseClients.add(client);
+  write(`retry: 2000\n\n`);
+  write(`event: connected\ndata: ${JSON.stringify({ status: "listening" })}\n\n`);
 
-  client.write(`retry: 2000\n\n`);
-  client.write(`event: connected\ndata: ${JSON.stringify({ status: "listening" })}\n\n`);
+  // Send current snapshot on connect
+  const initTasks = await getTasks().catch(() => [] as Task[]);
+  const initMessages = await getMessages().catch(() => [] as Message[]);
+  for (const task of initTasks) {
+    write(`event: task-update\ndata: ${JSON.stringify(task)}\n\n`);
+  }
+  for (const msg of initMessages) {
+    write(`event: message-added\ndata: ${JSON.stringify(msg)}\n\n`);
+  }
 
-  const heartbeat = setInterval(() => {
-    client.write(`:\n\n`);
-  }, 15000);
+  // Snapshot tracking for diff-based updates
+  const prevTaskState: Record<string, string> = {};
+  for (const t of initTasks) prevTaskState[t.id] = JSON.stringify(t);
+  let prevMsgCount = initMessages.length;
+  let prevBuildRunning = initTasks.some(t => t.status === "running");
 
-  // Keep the isolate alive for the full duration of this SSE connection.
-  // The async IIFE above returns immediately (just registers a listener),
-  // so we use a proper Promise that only resolves on abort — otherwise
-  // Cloudflare can recycle the isolate mid-stream.
   c.executionCtx.waitUntil(
     new Promise<void>((resolve) => {
+      let stopped = false;
+
+      const poll = async () => {
+        if (stopped || closed) { resolve(); return; }
+        try {
+          const tasks = await getTasks();
+          const messages = await getMessages();
+
+          // Emit task-update for any task whose state changed
+          for (const task of tasks) {
+            const serialized = JSON.stringify(task);
+            if (prevTaskState[task.id] !== serialized) {
+              write(`event: task-update\ndata: ${serialized}\n\n`);
+              prevTaskState[task.id] = serialized;
+            }
+          }
+
+          // Emit new messages
+          if (messages.length > prevMsgCount) {
+            for (let i = prevMsgCount; i < messages.length; i++) {
+              write(`event: message-added\ndata: ${JSON.stringify(messages[i])}\n\n`);
+            }
+            prevMsgCount = messages.length;
+          }
+
+          // Emit build-finished once tasks go from running → all done
+          const nowRunning = tasks.some(t => t.status === "running");
+          const allDone = tasks.length > 0 && tasks.every(t => t.status === "completed" || t.status === "failed");
+          if (prevBuildRunning && !nowRunning && allDone) {
+            const lastMsg = messages[messages.length - 1];
+            if (lastMsg) {
+              write(`event: build-finished\ndata: ${JSON.stringify(lastMsg)}\n\n`);
+            }
+          }
+          prevBuildRunning = nowRunning;
+        } catch (_) { /* ignore transient D1 errors */ }
+
+        if (!stopped && !closed) setTimeout(poll, 1500);
+        else resolve();
+      };
+
+      const heartbeat = setInterval(() => write(`:\n\n`), 20000);
+      setTimeout(poll, 1500);
+
       const cleanup = () => {
+        stopped = true;
         clearInterval(heartbeat);
-        sseClients.delete(client);
         writer.close().catch(() => {});
         resolve();
       };
+
       if (c.req.raw.signal) {
         c.req.raw.signal.addEventListener("abort", cleanup, { once: true });
       }
-      // Safety valve: resolve after 10 minutes max so the waitUntil never leaks.
+      // Safety valve: 10 minute max lifetime per connection
       setTimeout(cleanup, 10 * 60 * 1000);
     })
   );
@@ -447,7 +497,7 @@ app.get("/api/tasks/stream", (c) => {
     headers: {
       "Content-Type": "text/event-stream",
       "Cache-Control": "no-cache, no-transform",
-      Connection: "keep-alive",
+      "Connection": "keep-alive",
       "X-Accel-Buffering": "no",
     },
   });

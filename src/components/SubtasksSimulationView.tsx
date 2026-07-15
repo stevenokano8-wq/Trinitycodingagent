@@ -70,13 +70,31 @@ interface TemplateOption {
 // Optimized, memoized Server Event Stream console logger (Column 1)
 const EventStreamConsole = React.memo(function EventStreamConsole({ 
   logs,
-  logsEndRef
 }: { 
   logs: LogMessage[];
-  logsEndRef: React.RefObject<HTMLDivElement | null>;
 }) {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const isAtBottomRef = useRef<boolean>(true);
+
+  const handleScroll = () => {
+    if (!containerRef.current) return;
+    const { scrollTop, scrollHeight, clientHeight } = containerRef.current;
+    // Check if user is near bottom within 60px
+    isAtBottomRef.current = scrollHeight - scrollTop - clientHeight < 60;
+  };
+
+  useEffect(() => {
+    if (containerRef.current && isAtBottomRef.current) {
+      containerRef.current.scrollTop = containerRef.current.scrollHeight;
+    }
+  }, [logs]);
+
   return (
-    <div className="flex-1 bg-gray-950 rounded-2xl p-4 font-mono text-[10px] sm:text-xs overflow-y-auto space-y-2 text-gray-300 scrollbar-thin">
+    <div 
+      ref={containerRef}
+      onScroll={handleScroll}
+      className="flex-1 bg-gray-950 rounded-2xl p-4 font-mono text-[10px] sm:text-xs overflow-y-auto space-y-2 text-gray-300 scrollbar-thin select-text whitespace-pre-wrap"
+    >
       {logs.length === 0 ? (
         <div className="h-full flex flex-col items-center justify-center text-center text-gray-650 px-4">
           <Terminal className="h-8 w-8 text-gray-800 mb-2 stroke-1" />
@@ -91,24 +109,42 @@ const EventStreamConsole = React.memo(function EventStreamConsole({
           if (log.type === "warning") colorClass = "text-amber-400";
           
           return (
-            <div key={idx} className="leading-relaxed border-b border-gray-900/30 pb-1 flex items-start gap-1.5">
+            <div key={idx} className="leading-relaxed border-b border-gray-900/30 pb-1 flex items-start gap-1.5 whitespace-pre-wrap font-mono">
               <span className="text-gray-600 text-[9px] select-none shrink-0">[{log.timestamp}]</span>
               <span className={colorClass}>{log.text}</span>
             </div>
           );
         })
       )}
-      <div ref={logsEndRef} />
     </div>
   );
 });
 
 // Memoized logs viewer inside subtasks
 const CompilerSubtaskLogs = React.memo(function CompilerSubtaskLogs({ logs }: { logs: string[] }) {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const isAtBottomRef = useRef<boolean>(true);
+
+  const handleScroll = () => {
+    if (!containerRef.current) return;
+    const { scrollTop, scrollHeight, clientHeight } = containerRef.current;
+    isAtBottomRef.current = scrollHeight - scrollTop - clientHeight < 30;
+  };
+
+  useEffect(() => {
+    if (containerRef.current && isAtBottomRef.current) {
+      containerRef.current.scrollTop = containerRef.current.scrollHeight;
+    }
+  }, [logs]);
+
   return (
-    <div className="mt-2 bg-slate-900 text-slate-300 p-2 rounded-md font-mono text-[9px] max-h-24 overflow-y-auto space-y-1">
+    <div 
+      ref={containerRef}
+      onScroll={handleScroll}
+      className="mt-2 bg-slate-900 text-slate-300 p-2 rounded-md font-mono text-[9px] max-h-24 overflow-y-auto space-y-1 whitespace-pre-wrap break-all"
+    >
       {logs.map((subl, sLogIdx) => (
-        <div key={sLogIdx} className="leading-tight">{subl}</div>
+        <div key={sLogIdx} className="leading-tight font-mono whitespace-pre-wrap">{subl}</div>
       ))}
     </div>
   );
@@ -289,8 +325,6 @@ export default function SubtasksSimulationView() {
   const [previewDevice, setPreviewDevice] = useState<"desktop" | "mobile">("desktop");
   const [previewReloading, setPreviewReloading] = useState(false);
   const [previewState, setPreviewState] = useState<"idle" | "reloading" | "live">("idle");
-
-  const eventLogsEndRef = useRef<HTMLDivElement>(null);
 
   // Hardcoded template examples
   const templates: TemplateOption[] = [
@@ -511,11 +545,6 @@ export default function SubtasksSimulationView() {
       )
     }
   ];
-
-  // Sync scroll on logs
-  useEffect(() => {
-    eventLogsEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [eventLogs]);
 
   const activeTemplate = templates.find(t => t.id === selectedTemplateId) || templates[0];
 
@@ -821,7 +850,7 @@ export default function SubtasksSimulationView() {
           </div>
 
           {/* Logs View Container */}
-          <EventStreamConsole logs={eventLogs} logsEndRef={eventLogsEndRef} />
+          <EventStreamConsole logs={eventLogs} />
         </div>
 
         {/* COLUMN 2: TASK ACCORDION GENERATION (PHASE 2) */}

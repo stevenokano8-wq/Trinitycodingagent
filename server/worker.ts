@@ -14,31 +14,6 @@ import { planBuildTasks, executeAgentBuild, sseClients, broadcastSSE, cancelActi
 import { getGithubConfig, saveGithubConfig, executeGitPush } from "./github.js";
 import { AppEnv, setRuntimeOverrides, resolveEnvWithOverrides } from "./env.js";
 import { DatabaseStatus, Message, FileNode } from "../src/types.js";
-import { logger } from "./logger.js";
-import { assertSafeRelativePath } from "./security.js";
-
-// Attachment validation: previously any base64 payload/mime type was
-// accepted straight through to the LLM call. Cap size (base64 length is
-// ~4/3 the raw byte size) and restrict to mime types the agent actually
-// knows how to use, so a malformed/oversized upload fails fast with a
-// clear 400 instead of burning a slow Gemini call or blowing up D1 storage.
-const MAX_ATTACHMENT_BASE64_LENGTH = 12_000_000; // ~9MB raw
-const ALLOWED_ATTACHMENT_MIME_PREFIXES = ["image/", "text/", "application/json", "application/pdf"];
-
-function validateAttachment(attachment: any): string | null {
-  if (!attachment) return null;
-  if (typeof attachment.data !== "string" || typeof attachment.type !== "string" || typeof attachment.name !== "string") {
-    return "Attachment must include name, type, and base64 data.";
-  }
-  if (attachment.data.length > MAX_ATTACHMENT_BASE64_LENGTH) {
-    return `Attachment exceeds maximum size (${MAX_ATTACHMENT_BASE64_LENGTH} base64 chars).`;
-  }
-  const isAllowedType = ALLOWED_ATTACHMENT_MIME_PREFIXES.some((prefix) => attachment.type.startsWith(prefix));
-  if (!isAllowedType) {
-    return `Attachment type "${attachment.type}" is not supported. Allowed: images, text, JSON, PDF.`;
-  }
-  return null;
-}
 
 type Bindings = AppEnv;
 
@@ -84,9 +59,6 @@ app.post("/api/messages", async (c) => {
     const { role, content, attachment, sessionId } = body;
     if (!content) return c.json({ error: "Content is required" }, 400);
 
-    const attachmentError = validateAttachment(attachment);
-    if (attachmentError) return c.json({ error: attachmentError }, 400);
-
     const userMsg: Message = {
       id: `msg-${Date.now()}-user`,
       role: role || "user",
@@ -116,7 +88,7 @@ app.post("/api/messages", async (c) => {
               sessionGitToken = data.token || "";
               sessionGitRepoUrl = data.repoUrl || "";
             } catch (e) {
-              logger.warn(`Failed to parse cached github config for session`, { sessionId, err: String(e) });
+              console.error("Failed to parse cached github config for session:", e);
             }
           }
         }
@@ -130,17 +102,17 @@ app.post("/api/messages", async (c) => {
         // Long-running background build: must be kept alive with waitUntil,
         // otherwise the Worker would tear down the request context as soon
         // as this handler returns its response.
-        c.executionCtx.waitUntil(executeAgentBuild(content, plannedTasks, customEnv, attachment, sessionId));
+        c.executionCtx.waitUntil(executeAgentBuild(content, plannedTasks, customEnv, attachment));
 
         return c.json({ message: userMsg, tasks: plannedTasks });
       } catch (agentErr: any) {
-        logger.error(`Agent planning error`, { err: agentErr.message });
+        console.error("Agent planning error:", agentErr);
         return c.json({ message: userMsg, error: agentErr.message });
       }
     }
     return c.json({ message: userMsg });
   } catch (err: any) {
-    logger.error(`API messages insert error`, { err: err.message });
+    console.error("API messages insert error:", err);
     return c.json({ error: err.message }, 500);
   }
 });
@@ -185,7 +157,7 @@ app.post("/api/session/load", async (c) => {
     broadcastSSE("connected", { status: "refreshed" });
     return c.json({ status: "success", message: "Workspace session loaded successfully." });
   } catch (err: any) {
-    logger.error(`API session load error`, { err: err.message });
+    console.error("API session load error:", err);
     return c.json({ error: err.message }, 500);
   }
 });
@@ -226,11 +198,6 @@ app.post("/api/files/save", async (c) => {
     if (!filePath || content === undefined) {
       return c.json({ error: "path and content are required parameters" }, 400);
     }
-    try {
-      assertSafeRelativePath(filePath);
-    } catch (pathErr: any) {
-      return c.json({ error: pathErr.message }, 400);
-    }
 
     const fileNode: FileNode = { path: filePath, content, language: language || "typescript" };
     await saveFile(fileNode);
@@ -241,7 +208,7 @@ app.post("/api/files/save", async (c) => {
         (async () => {
           const allFiles = await getFiles();
           const pRes = await executeGitPush(resolved.GITHUB_TOKEN!, resolved.GITHUB_REPO_URL!, "main", allFiles);
-          logger.info(`Auto-push on manual save`, { success: pRes.success, message: pRes.success ? undefined : pRes.message });
+          console.log(`Auto-push on manual save: ${pRes.success ? "Success" : "Failed: " + pRes.message}`);
         })()
       );
     }
@@ -295,7 +262,7 @@ app.get("/api/github/config", async (c) => {
             maskedToken: token ? `${token.substring(0, 4)}••••••••` : "",
           });
         } catch (e) {
-          logger.warn(`Failed to parse cached github config`, { err: String(e) });
+          console.error("Failed to parse cached config:", e);
         }
       }
     }
@@ -318,7 +285,7 @@ app.post("/api/github/config", async (c) => {
           existingToken = data.token || "";
           existingBranch = data.branch || "main";
         } catch (e) {
-          logger.warn(`Failed parsing cached github config on save`, { err: String(e) });
+          console.error("Failed parsing cached config on save:", e);
         }
       }
 
@@ -356,7 +323,7 @@ app.post("/api/github/push", async (c) => {
           if (!currentRepoUrl) currentRepoUrl = data.repoUrl;
           if (!branch) currentBranch = data.branch || "main";
         } catch (e) {
-          logger.warn(`Failed parsing cached github config on push`, { err: String(e) });
+          console.error("Failed parsing cached config on push:", e);
         }
       }
     }
@@ -376,23 +343,13 @@ app.post("/api/github/push", async (c) => {
 // and register its writer in the same `sseClients` set that agent.ts's
 // broadcastSSE() already writes to via `.write(...)`. Known limitation
 // (accepted scope): this only fans out to clients connected to the same
-// isolate that handles the broadcast — there's no cross-isolate pub/sub here
-// (would need Durable Objects for that; out of scope for this pass).
-//
-// Session scoping: each connection carries the caller's sessionId. Events
-// broadcast with a matching sessionId (see broadcastSSE's optional 3rd arg
-// in agent.ts) are only delivered to clients whose sessionId matches, or to
-// clients with no sessionId (back-compat / single-tenant local dev).
-// Global events (no sessionId on the broadcast, e.g. "session-cleared")
-// still fan out to everyone, matching prior behavior.
+// isolate that handles the broadcast — there's no cross-isolate pub/sub here.
 app.get("/api/tasks/stream", (c) => {
   const { readable, writable } = new TransformStream();
   const writer = writable.getWriter();
   const encoder = new TextEncoder();
-  const sessionId = c.req.query("sessionId") || undefined;
 
   const client = {
-    sessionId,
     write: (chunk: string) => {
       writer.write(encoder.encode(chunk)).catch(() => {
         sseClients.delete(client);

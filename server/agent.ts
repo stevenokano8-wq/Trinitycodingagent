@@ -5,9 +5,6 @@ import { cacheSet, cacheGet } from "./cache.js";
 import { executeGitPush } from "./github.js";
 import { AppEnv, resolveEnvWithOverrides, AiBinding } from "./env.js";
 import { routeLLMTask } from "./llmRouter.js";
-import { withRetry } from "./retry.js";
-import { logger } from "./logger.js";
-import { isOversizedFileContent, MAX_FILE_CONTENT_BYTES } from "./security.js";
 
 let aiClient: GoogleGenAI | null = null;
 let aiClientKey: string | null = null;
@@ -32,19 +29,12 @@ export function getGeminiClient(env?: Partial<AppEnv>): GoogleGenAI {
   return aiClient;
 }
 
-// Active SSE client connections for real-time progress broadcasts. Each
-// client may carry a `sessionId` (set in worker.ts's /api/tasks/stream) so
-// broadcasts can optionally be scoped to a single session instead of
-// fanning out to every connected client.
-export const sseClients = new Set<{ sessionId?: string; write: (chunk: string) => void }>();
+// Active SSE client connections for real-time progress broadcasts
+export const sseClients = new Set<any>();
 
-export function broadcastSSE(event: string, data: any, sessionId?: string) {
+export function broadcastSSE(event: string, data: any) {
   const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
   for (const client of sseClients) {
-    // A session-scoped broadcast only reaches clients on that same session
-    // (or legacy clients with no sessionId, for back-compat). A global
-    // broadcast (sessionId undefined) always reaches everyone.
-    if (sessionId && client.sessionId && client.sessionId !== sessionId) continue;
     try {
       client.write(payload);
     } catch (err) {
@@ -131,17 +121,13 @@ ${intent === "feature" ? `- Since this is a self-contained feature, plan 1 or 2 
 ${intent === "application" ? `- Since this is a full app or feature build, plan 2 or 3 tasks with 2 or 3 subtasks each.` : ""}
 - Every subtask description MUST be a plain English sentence explaining one concrete action.`;
 
-    const resp = await withRetry(
-      () =>
-        ai.run("@cf/meta/llama-3.3-70b-instruct-fp8-fast", {
-          messages: [
-            { role: "system", content: systemPrompt },
-            { role: "user", content: `Create a task plan for: "${userPrompt}"` }
-          ],
-          max_tokens: 900
-        }),
-      { retries: 2, onRetry: (attempt, err) => logger.warn(`Workers AI planning retry`, { attempt, err: String(err) }) }
-    );
+    const resp = await ai.run("@cf/meta/llama-3.3-70b-instruct-fp8-fast", {
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: `Create a task plan for: "${userPrompt}"` }
+      ],
+      max_tokens: 900
+    });
 
     const raw = (resp.response || "").trim();
     const jsonMatch = raw.match(/\{[\s\S]*\}/);
@@ -168,7 +154,7 @@ ${intent === "application" ? `- Since this is a full app or feature build, plan 
       };
     });
   } catch (err: any) {
-    logger.warn(`CF Workers AI planning failed, falling back to Gemini`, { err: err.message });
+    console.error("CF Workers AI planning failed, falling back to Gemini:", err.message);
     return null;
   }
 }
@@ -181,7 +167,7 @@ export async function planBuildTasks(userPrompt: string, env?: Partial<AppEnv>, 
   if (env?.AI && !attachment) {
     const cfTasks = await planWithCFWorkersAI(env.AI, userPrompt, intent);
     if (cfTasks && cfTasks.length > 0) {
-      logger.info(`Task planning delegated to Cloudflare Workers AI`, { taskCount: cfTasks.length, intent });
+      console.log(`Task planning delegated to Cloudflare Workers AI (${cfTasks.length} tasks created) with intent [${intent}].`);
       return cfTasks;
     }
   }
@@ -192,9 +178,9 @@ export async function planBuildTasks(userPrompt: string, env?: Partial<AppEnv>, 
     
     // Analyze prompt complexity and route accordingly
     const route = routeLLMTask(userPrompt, undefined, attachment?.name);
-    logger.info(`LLM Router: planning task routed`, { model: route.model, complexity: route.complexity, score: route.score, reason: route.reason });
+    console.log(`[LLM Router] Planning task routed: Model = ${route.model}, Complexity = ${route.complexity.toUpperCase()} (Score: ${route.score}/10). Reason: ${route.reason}`);
 
-    logger.info(`Planning build tasks using Gemini`, { model: route.model, intent });
+    console.log(`Planning build tasks using Gemini model "${route.model}" with intent [${intent}] (primary / fallback)...`);
 
     const promptText = `You are Sovereign Agent, a highly execution-focused, expert full-stack development agent.
       
@@ -293,7 +279,7 @@ export async function planBuildTasks(userPrompt: string, env?: Partial<AppEnv>, 
 
     return parsedTasks;
   } catch (err: any) {
-    logger.error(`Failed planning build tasks with Gemini, creating default template tasks`, { err: err.message });
+    console.error("Failed planning build tasks with Gemini, creating default template tasks:", err.message);
     // Fallback tasks dynamically matching the user's intent if Gemini is offline or API key is missing
     const taskId1 = `task-${Date.now()}-0`;
     
@@ -362,28 +348,12 @@ export async function planBuildTasks(userPrompt: string, env?: Partial<AppEnv>, 
   }
 }
 
-// Per-build cancellation registry, keyed by buildId (not global). This
-// replaces the old single global `activeCancellationSignal`, which meant
-// cancelling ANY task aborted the one-and-only build in flight and made it
-// impossible to run/cancel two builds independently. Each call to
-// executeAgentBuild() registers its own buildId and maps every task.id it
-// owns to that buildId, so cancelActiveBuild(taskId) only aborts the build
-// that task actually belongs to.
-const buildCancellations = new Map<string, boolean>();
-const taskToBuildId = new Map<string, string>();
+// Active cancellation flag
+export let activeCancellationSignal = { aborted: false, taskId: "" };
 
 export function cancelActiveBuild(taskId: string) {
-  const buildId = taskToBuildId.get(taskId);
-  if (!buildId) {
-    // Unknown task (already finished/cleared, or id typo) — nothing to cancel.
-    logger.warn(`cancelActiveBuild called for unknown taskId`, { taskId });
-    return;
-  }
-  buildCancellations.set(buildId, true);
-}
-
-function isBuildCancelled(buildId: string): boolean {
-  return buildCancellations.get(buildId) === true;
+  activeCancellationSignal.aborted = true;
+  activeCancellationSignal.taskId = taskId;
 }
 
 interface ActionStep {
@@ -585,18 +555,11 @@ function generateActionStepsForSubtask(subtaskName: string, prompt: string, sIdx
 
 // Background builder that executes subtasks sequentially
 // and writes real-time logs and generated files!
-export async function executeAgentBuild(prompt: string, tasks: Task[], env?: Partial<AppEnv>, attachment?: any, sessionId?: string) {
+export async function executeAgentBuild(prompt: string, tasks: Task[], env?: Partial<AppEnv>, attachment?: any) {
   const startTime = Date.now();
   const modelsUsed = new Set<string>();
-
-  // Register this build's own cancellation slot and map every task it owns
-  // back to it, so cancelling one task's build doesn't affect any other
-  // concurrently running build.
-  const buildId = tasks[0]?.id ? `build-${tasks[0].id}` : `build-${Date.now()}`;
-  buildCancellations.set(buildId, false);
-  for (const t of tasks) taskToBuildId.set(t.id, buildId);
-
-  logger.info(`Starting execution for prompt`, { buildId, prompt });
+  console.log(`Starting execution for prompt: ${prompt}`);
+  activeCancellationSignal = { aborted: false, taskId: "" };
 
   const promptLower = prompt.toLowerCase();
   const shouldAudit = promptLower.includes("find errors") || 
@@ -629,10 +592,10 @@ export async function executeAgentBuild(prompt: string, tasks: Task[], env?: Par
     timestamp: new Date().toISOString()
   };
   await addMessage(initialTodoMsg);
-  broadcastSSE("message-added", initialTodoMsg, sessionId);
+  broadcastSSE("message-added", initialTodoMsg);
 
   // Broadcast to all connected clients that an agent run has started
-  broadcastSSE("build-started", { prompt, totalTasks: tasks.length }, sessionId);
+  broadcastSSE("build-started", { prompt, totalTasks: tasks.length });
 
   // 2. Initial Thought Simulation phase
   const thinkingStages = [
@@ -642,12 +605,12 @@ export async function executeAgentBuild(prompt: string, tasks: Task[], env?: Par
   ];
 
   for (let tIdx = 0; tIdx < thinkingStages.length; tIdx++) {
-    if (isBuildCancelled(buildId)) break;
+    if (activeCancellationSignal.aborted) break;
     broadcastSSE("thinking-update", { 
       stage: thinkingStages[tIdx].stage, 
       text: thinkingStages[tIdx].text,
       elapsed: tIdx * 1.5 + 0.8
-    }, sessionId);
+    });
     await new Promise((r) => setTimeout(r, 1200));
   }
 
@@ -663,7 +626,7 @@ export async function executeAgentBuild(prompt: string, tasks: Task[], env?: Par
   for (let tIdx = 0; tIdx < tasks.length; tIdx++) {
     const task = tasks[tIdx];
 
-    if (isBuildCancelled(buildId)) {
+    if (activeCancellationSignal.aborted) {
       task.status = "failed";
       task.completedAt = new Date().toISOString();
       for (const sub of task.subtasks) {
@@ -671,18 +634,18 @@ export async function executeAgentBuild(prompt: string, tasks: Task[], env?: Par
           sub.status = "failed";
           sub.logs.push(`[${new Date().toLocaleTimeString()}] Cancelled by User.`);
           sub.completedAt = new Date().toISOString();
-          broadcastSSE("subtask_log", { subtaskId: sub.id, log: `[SYSTEM] Cancelled by User.` }, sessionId);
+          broadcastSSE("subtask_log", { subtaskId: sub.id, log: `[SYSTEM] Cancelled by User.` });
         }
       }
       await saveTask(task);
-      broadcastSSE("task-update", task, sessionId);
+      broadcastSSE("task-update", task);
       continue;
     }
 
     task.status = "running";
     task.startedAt = new Date().toISOString();
     await saveTask(task);
-    broadcastSSE("task-update", task, sessionId);
+    broadcastSSE("task-update", task);
 
     const subtasks = task.subtasks;
     let taskFailed = false;
@@ -690,14 +653,14 @@ export async function executeAgentBuild(prompt: string, tasks: Task[], env?: Par
     for (let sIdx = 0; sIdx < subtasks.length; sIdx++) {
       const sub = subtasks[sIdx];
 
-      if (isBuildCancelled(buildId)) {
+      if (activeCancellationSignal.aborted) {
         taskFailed = true;
         sub.status = "failed";
         sub.completedAt = new Date().toISOString();
         sub.logs.push(`[${new Date().toLocaleTimeString()}] Cancelled by User.`);
-        broadcastSSE("subtask_log", { subtaskId: sub.id, log: `[SYSTEM] Cancelled by User.` }, sessionId);
+        broadcastSSE("subtask_log", { subtaskId: sub.id, log: `[SYSTEM] Cancelled by User.` });
         await saveTask(task);
-        broadcastSSE("task-update", task, sessionId);
+        broadcastSSE("task-update", task);
         continue;
       }
 
@@ -707,24 +670,24 @@ export async function executeAgentBuild(prompt: string, tasks: Task[], env?: Par
       
       const initLog = `[Sovereign Agent] Starting development of: "${sub.name}"...`;
       sub.logs = [initLog];
-      broadcastSSE("subtask_log", { subtaskId: sub.id, log: initLog }, sessionId);
+      broadcastSSE("subtask_log", { subtaskId: sub.id, log: initLog });
       
       await saveTask(task);
-      broadcastSSE("task-update", task, sessionId);
+      broadcastSSE("task-update", task);
 
       // Perform simulated step logs and file writing
       const steps = generateActionStepsForSubtask(sub.name, prompt, sIdx, shouldAudit);
 
       for (let stepIdx = 0; stepIdx < steps.length; stepIdx++) {
-        if (isBuildCancelled(buildId)) {
+        if (activeCancellationSignal.aborted) {
           taskFailed = true;
           sub.status = "failed";
           sub.completedAt = new Date().toISOString();
           const cancelLog = `[${new Date().toLocaleTimeString()}] Cancelled by User.`;
           sub.logs.push(cancelLog);
-          broadcastSSE("subtask_log", { subtaskId: sub.id, log: cancelLog }, sessionId);
+          broadcastSSE("subtask_log", { subtaskId: sub.id, log: cancelLog });
           await saveTask(task);
-          broadcastSSE("task-update", task, sessionId);
+          broadcastSSE("task-update", task);
           break;
         }
 
@@ -733,7 +696,7 @@ export async function executeAgentBuild(prompt: string, tasks: Task[], env?: Par
         
         const logLine = `[${new Date().toLocaleTimeString()}] ${currentStep.log}`;
         sub.logs.push(logLine);
-        broadcastSSE("subtask_log", { subtaskId: sub.id, log: logLine }, sessionId);
+        broadcastSSE("subtask_log", { subtaskId: sub.id, log: logLine });
 
         // Record any actions taken during the step!
         if (currentStep.action) {
@@ -752,40 +715,28 @@ export async function executeAgentBuild(prompt: string, tasks: Task[], env?: Par
 
             const routerLog = `[LLM Router] Routing subtask: Complexity is ${route.complexity.toUpperCase()} (Score: ${route.score}/10). Routed to: ${modelShort} (${route.model}). Reason: ${route.reason}`;
             sub.logs.push(routerLog);
-            broadcastSSE("subtask_log", { subtaskId: sub.id, log: routerLog }, sessionId);
+            broadcastSSE("subtask_log", { subtaskId: sub.id, log: routerLog });
 
             const filePrompt = `You are a professional full-stack developer. Write a fully-functional, beautiful, complete TypeScript React file, Express router, HTML, or schema file for the subtask: "${sub.name}" inside the larger project of: "${prompt}". Return ONLY the code, with no markdown tags, and no conversational text. Start with the code directly.`;
             
             const sysLog = `[SYSTEM] Requesting AI code synthesis using ${modelShort} model...`;
             sub.logs.push(sysLog);
-            broadcastSSE("subtask_log", { subtaskId: sub.id, log: sysLog }, sessionId);
+            broadcastSSE("subtask_log", { subtaskId: sub.id, log: sysLog });
 
-            const fileRes = await withRetry(
-              () =>
-                ai.models.generateContent({
-                  model: route.model,
-                  contents: attachment ? [
-                    {
-                      inlineData: {
-                        mimeType: attachment.type,
-                        data: attachment.data,
-                      }
-                    },
-                    {
-                      text: `${filePrompt}\n\nThe user also uploaded an attachment named "${attachment.name}" of type "${attachment.type}". Please use/incorporate its contents, data structures, or design layout in your synthesized code.`
-                    }
-                  ] : filePrompt,
-                }),
-              {
-                retries: 2,
-                onRetry: (attempt, err) => {
-                  const retryLog = `[SYSTEM] Gemini synthesis attempt ${attempt} failed, retrying...`;
-                  sub.logs.push(retryLog);
-                  broadcastSSE("subtask_log", { subtaskId: sub.id, log: retryLog }, sessionId);
-                  logger.warn(`Gemini synthesis retry`, { subtaskId: sub.id, attempt, err: String(err) });
+            const fileRes = await ai.models.generateContent({
+              model: route.model,
+              contents: attachment ? [
+                {
+                  inlineData: {
+                    mimeType: attachment.type,
+                    data: attachment.data,
+                  }
+                },
+                {
+                  text: `${filePrompt}\n\nThe user also uploaded an attachment named "${attachment.name}" of type "${attachment.type}". Please use/incorporate its contents, data structures, or design layout in your synthesized code.`
                 }
-              }
-            );
+              ] : filePrompt,
+            });
 
             let fileContent = fileRes.text || "// AI Synthesis yielded empty code file.";
             // Strip any markdown code fence blocks if returned
@@ -802,23 +753,6 @@ export async function executeAgentBuild(prompt: string, tasks: Task[], env?: Par
             const extension = isSchema ? "_schema.ts" : isApi ? "_api.ts" : "_component.tsx";
             const filePath = `src/generated/${cleanName}${extension}`;
             
-            // D1's TEXT columns tolerate very large values in principle, but
-            // extremely large generated files degrade query/backup
-            // performance well before any hard limit is hit — warn instead
-            // of silently writing an oversized row.
-            if (isOversizedFileContent(fileContent)) {
-              logger.warn(`Generated file exceeds recommended size, truncating for storage`, {
-                subtaskId: sub.id,
-                filePath,
-                sizeBytes: fileContent.length,
-                maxBytes: MAX_FILE_CONTENT_BYTES,
-              });
-              const oversizeLog = `[WARN] Generated file ${filePath} (${fileContent.length} bytes) exceeds the ${MAX_FILE_CONTENT_BYTES}-byte guideline; truncating before storage.`;
-              sub.logs.push(oversizeLog);
-              broadcastSSE("subtask_log", { subtaskId: sub.id, log: oversizeLog }, sessionId);
-              fileContent = fileContent.slice(0, MAX_FILE_CONTENT_BYTES) + "\n// [truncated: exceeded size guideline]\n";
-            }
-
             const fileNode: FileNode = {
               path: filePath,
               content: fileContent,
@@ -831,7 +765,7 @@ export async function executeAgentBuild(prompt: string, tasks: Task[], env?: Par
             
             const successLog = `[SUCCESS] File successfully generated and stored: ${filePath}`;
             sub.logs.push(successLog);
-            broadcastSSE("subtask_log", { subtaskId: sub.id, log: successLog }, sessionId);
+            broadcastSSE("subtask_log", { subtaskId: sub.id, log: successLog });
             
             // Record edit file action
             actionsTaken.push({
@@ -842,14 +776,14 @@ export async function executeAgentBuild(prompt: string, tasks: Task[], env?: Par
             });
 
             // Also notify client of the new file
-            broadcastSSE("file-created", fileNode, sessionId);
+            broadcastSSE("file-created", fileNode);
           } catch (e: any) {
             const cleanName = sub.name.toLowerCase().replace(/[^a-z0-9]/g, "_").substring(0, 20);
             const filePath = `src/generated/${cleanName}_fallback.ts`;
             
             const fallbackLog = `[INFO] Code synthesis fallback. Generating mock template file: ${filePath}`;
             sub.logs.push(fallbackLog);
-            broadcastSSE("subtask_log", { subtaskId: sub.id, log: fallbackLog }, sessionId);
+            broadcastSSE("subtask_log", { subtaskId: sub.id, log: fallbackLog });
 
             const mockContent = `/**\n * Generated Module - ${sub.name}\n * Purpose: ${sub.name}\n */\nexport function run() {\n  console.log("Module initialized for ${sub.name}");\n}`;
             const fileNode: FileNode = {
@@ -860,7 +794,7 @@ export async function executeAgentBuild(prompt: string, tasks: Task[], env?: Par
             await saveFile(fileNode);
             sub.file = filePath;
             sub.code = mockContent;
-            broadcastSSE("file-created", fileNode, sessionId);
+            broadcastSSE("file-created", fileNode);
           }
         }
 
@@ -870,7 +804,7 @@ export async function executeAgentBuild(prompt: string, tasks: Task[], env?: Par
         );
         
         await saveTask(task);
-        broadcastSSE("task-update", task, sessionId);
+        broadcastSSE("task-update", task);
       }
 
       if (!taskFailed && sub.status === "running") {
@@ -878,39 +812,39 @@ export async function executeAgentBuild(prompt: string, tasks: Task[], env?: Par
         sub.completedAt = new Date().toISOString();
         const subSuccessLog = `[SUCCESS] "${sub.name}" completed successfully.`;
         sub.logs.push(subSuccessLog);
-        broadcastSSE("subtask_log", { subtaskId: sub.id, log: subSuccessLog }, sessionId);
+        broadcastSSE("subtask_log", { subtaskId: sub.id, log: subSuccessLog });
         await saveTask(task);
-        broadcastSSE("task-update", task, sessionId);
+        broadcastSSE("task-update", task);
       }
     }
 
-    if (isBuildCancelled(buildId)) {
+    if (activeCancellationSignal.aborted) {
       task.status = "failed";
       task.completedAt = new Date().toISOString();
       await saveTask(task);
-      broadcastSSE("task-update", task, sessionId);
+      broadcastSSE("task-update", task);
     } else {
       task.status = "completed";
       task.completedAt = new Date().toISOString();
       task.progress = 100;
       await saveTask(task);
-      broadcastSSE("task-update", task, sessionId);
+      broadcastSSE("task-update", task);
     }
   }
 
   // 4. Production Build stage
-  if (!isBuildCancelled(buildId) && shouldAudit) {
+  if (!activeCancellationSignal.aborted && shouldAudit) {
     const buildTaskId = `build-process`;
-    broadcastSSE("subtask_log", { subtaskId: buildTaskId, log: `cmd> npm run build` }, sessionId);
+    broadcastSSE("subtask_log", { subtaskId: buildTaskId, log: `cmd> npm run build` });
     await new Promise((r) => setTimeout(r, 1200));
-    broadcastSSE("subtask_log", { subtaskId: buildTaskId, log: `[INFO] vite v5.2.11 building for production...` }, sessionId);
+    broadcastSSE("subtask_log", { subtaskId: buildTaskId, log: `[INFO] vite v5.2.11 building for production...` });
     await new Promise((r) => setTimeout(r, 1000));
-    broadcastSSE("subtask_log", { subtaskId: buildTaskId, log: `[SUCCESS] ✓ 34 modules transformed.` }, sessionId);
+    broadcastSSE("subtask_log", { subtaskId: buildTaskId, log: `[SUCCESS] ✓ 34 modules transformed.` });
     await new Promise((r) => setTimeout(r, 600));
-    broadcastSSE("subtask_log", { subtaskId: buildTaskId, log: `[SUCCESS] dist/index.html                     0.45 kB │ gzip: 0.28 kB` }, sessionId);
-    broadcastSSE("subtask_log", { subtaskId: buildTaskId, log: `[SUCCESS] dist/assets/index-D_i9C8uF.css     67.12 kB │ gzip: 11.45 kB` }, sessionId);
-    broadcastSSE("subtask_log", { subtaskId: buildTaskId, log: `[SUCCESS] dist/assets/index-CpV_0V9c.js     143.82 kB │ gzip: 46.21 kB` }, sessionId);
-    broadcastSSE("subtask_log", { subtaskId: buildTaskId, log: `[SUCCESS] Production build completed successfully in 2.8s!` }, sessionId);
+    broadcastSSE("subtask_log", { subtaskId: buildTaskId, log: `[SUCCESS] dist/index.html                     0.45 kB │ gzip: 0.28 kB` });
+    broadcastSSE("subtask_log", { subtaskId: buildTaskId, log: `[SUCCESS] dist/assets/index-D_i9C8uF.css     67.12 kB │ gzip: 11.45 kB` });
+    broadcastSSE("subtask_log", { subtaskId: buildTaskId, log: `[SUCCESS] dist/assets/index-CpV_0V9c.js     143.82 kB │ gzip: 46.21 kB` });
+    broadcastSSE("subtask_log", { subtaskId: buildTaskId, log: `[SUCCESS] Production build completed successfully in 2.8s!` });
 
     actionsTaken.push({
       type: 'build',
@@ -925,9 +859,9 @@ export async function executeAgentBuild(prompt: string, tasks: Task[], env?: Par
   const resolvedEnv = resolveEnvWithOverrides(env);
   const gitToken = resolvedEnv.GITHUB_TOKEN;
   const gitRepoUrl = resolvedEnv.GITHUB_REPO_URL;
-  if (gitToken && gitRepoUrl && !isBuildCancelled(buildId)) {
+  if (gitToken && gitRepoUrl && !activeCancellationSignal.aborted) {
     try {
-      logger.info(`Automatic GitHub synchronization enabled, triggering Git push`, { buildId });
+      console.log("Automatic GitHub synchronization enabled. Triggering Git push sequence...");
       const allFiles = await getFiles();
       const pushResult = await executeGitPush(gitToken, gitRepoUrl, "main", allFiles);
       if (pushResult.success) {
@@ -948,7 +882,7 @@ export async function executeAgentBuild(prompt: string, tasks: Task[], env?: Par
     ? `\n- **Intelligent LLM Routing**: Dynamically analyzed complexity and delegated subtasks to appropriate Gemini models: **${Array.from(modelsUsed).map(m => m === "Pro" ? "Pro (Architectural)" : "Flash (Responsive)").join(" & ")}**` 
     : "";
 
-  if (isBuildCancelled(buildId)) {
+  if (activeCancellationSignal.aborted) {
     finalSummaryText = `### Sovereign Agent Task Report: CANCELLED\nThe development run was cancelled by the user. Some tasks may have been aborted.`;
   } else if (shouldAudit) {
     finalSummaryText = `### Sovereign Agent Task Report
@@ -993,11 +927,5 @@ I have successfully completed the tasks for **"${prompt}"**:
   };
 
   await addMessage(assistantMsg);
-  broadcastSSE("build-finished", assistantMsg, sessionId);
-
-  // Release this build's cancellation slot and task mappings now that it's
-  // done — otherwise both maps grow without bound across the isolate's
-  // lifetime as new builds are kicked off.
-  buildCancellations.delete(buildId);
-  for (const t of tasks) taskToBuildId.delete(t.id);
+  broadcastSSE("build-finished", assistantMsg);
 }

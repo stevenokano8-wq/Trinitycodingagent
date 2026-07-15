@@ -1,5 +1,4 @@
 import { AppEnv, KVNamespace, resolveEnvWithOverrides } from "./env.js";
-import { logger } from "./logger.js";
 
 // Local Node dev (`pnpm dev`) has no KV binding available outside `wrangler
 // dev`, so it always uses this in-memory Map as the cache emulation.
@@ -11,7 +10,7 @@ export async function initCache(env?: Partial<AppEnv>): Promise<{ status: "conne
   const resolved = resolveEnvWithOverrides(env);
 
   if (!resolved.CACHE_KV) {
-    logger.info(`No KV binding (CACHE_KV) present, falling back to in-memory cache emulation`);
+    console.log("No KV binding (CACHE_KV) present. Falling back to in-memory cache emulation.");
     useLocalCache = true;
     kv = null;
     return { status: "local_fallback" };
@@ -23,10 +22,10 @@ export async function initCache(env?: Partial<AppEnv>): Promise<{ status: "conne
     // binding is actually reachable before we trust it for the session.
     await kv.list({ prefix: "__healthcheck__" });
     useLocalCache = false;
-    logger.info(`Successfully connected to Cloudflare Workers KV`);
+    console.log("Successfully connected to Cloudflare Workers KV!");
     return { status: "connected" };
   } catch (err: any) {
-    logger.error(`Workers KV connection failed, falling back to in-memory cache`, { err: err.message });
+    console.error("Workers KV connection failed, falling back to in-memory cache:", err.message);
     useLocalCache = true;
     kv = null;
     return { status: "error" };
@@ -41,7 +40,7 @@ export async function cacheGet(key: string): Promise<string | null> {
     const val = await kv.get(key, { type: "text" });
     return val ?? null;
   } catch (err) {
-    logger.error(`KV GET error`, { key, err: String(err) });
+    console.error(`KV GET error for key ${key}:`, err);
     return localCache.get(key) ?? null;
   }
 }
@@ -57,7 +56,7 @@ export async function cacheSet(key: string, value: string, ttlSeconds?: number):
     const options = ttlSeconds ? { expirationTtl: Math.max(60, ttlSeconds) } : undefined;
     await kv.put(key, value, options);
   } catch (err) {
-    logger.error(`KV PUT error`, { key, err: String(err) });
+    console.error(`KV PUT error for key ${key}:`, err);
     localCache.set(key, value);
   }
 }
@@ -70,7 +69,7 @@ export async function cacheDel(key: string): Promise<void> {
   try {
     await kv.delete(key);
   } catch (err) {
-    logger.error(`KV DELETE error`, { key, err: String(err) });
+    console.error(`KV DELETE error for key ${key}:`, err);
     localCache.delete(key);
   }
 }
@@ -84,7 +83,7 @@ export async function cacheFlush(): Promise<void> {
     const { keys } = await kv.list();
     await Promise.all(keys.map((k) => kv!.delete(k.name)));
   } catch (err) {
-    logger.error(`KV flush error`, { err: String(err) });
+    console.error("KV flush error:", err);
     localCache.clear();
   }
 }

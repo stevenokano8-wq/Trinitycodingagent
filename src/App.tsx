@@ -24,11 +24,9 @@ import {
   Clock,
   Loader2,
   Sparkles,
-  X,
-  CheckCircle2
+  X
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
-import { ArrowDown, BookOpen, PenLine, Brain, FolderPlus, Hammer, Terminal as TerminalIcon } from "lucide-react";
 import { Message, Task, FileNode, DatabaseStatus } from "./types.js";
 import TaskAccordion from "./components/TaskAccordion.tsx";
 import { API_BASE } from "./lib/api.ts";
@@ -93,15 +91,9 @@ function renderMarkdownMessage(content: string) {
   );
 }
 
-// "ActionsGroup" — the collapsible per-turn record of what the agent did
-// (files opened/edited, commands run, planning) rendered inline in the chat
-// flow. Auto-expands ("Show less") while the turn is actively streaming so
-// the user can watch it work, then collapses to a compact "Show more" pill
-// once the turn completes — mirroring a real coding-agent transcript.
-function ActionHistoryAccordion({ msg, isLive }: { msg: Message; isLive?: boolean }) {
-  const [manualOverride, setManualOverride] = useState<boolean | null>(null);
-  const isOpen = manualOverride !== null ? manualOverride : !!isLive;
-
+function ActionHistoryAccordion({ msg }: { msg: Message }) {
+  const [isOpen, setIsOpen] = useState(false); // Closed/collapsed by default as requested!
+  
   if (!msg.actionsTaken || msg.actionsTaken.length === 0) return null;
 
   const foldersCreated = msg.actionsTaken.filter(a => a.type === 'create_folder').length;
@@ -109,12 +101,8 @@ function ActionHistoryAccordion({ msg, isLive }: { msg: Message; isLive?: boolea
   const filesEdited = msg.actionsTaken.filter(a => a.type === 'edit_file').length;
   const commandsRun = msg.actionsTaken.filter(a => a.type === 'run_command').length;
   const isBuilt = msg.actionsTaken.some(a => a.type === 'build');
-  const hasPlanning = msg.thoughtTimeSeconds !== undefined;
-
-  const totalSteps = msg.actionsTaken.length + (hasPlanning ? 1 : 0);
 
   const summaryParts: string[] = [];
-  if (hasPlanning) summaryParts.push("Planned approach");
   if (foldersCreated > 0) summaryParts.push(`Created ${foldersCreated} folder${foldersCreated > 1 ? 's' : ''}`);
   if (filesCreated > 0) summaryParts.push(`Created ${filesCreated} file${filesCreated > 1 ? 's' : ''}`);
   if (filesEdited > 0) summaryParts.push(`Edited ${filesEdited} file${filesEdited > 1 ? 's' : ''}`);
@@ -127,80 +115,62 @@ function ActionHistoryAccordion({ msg, isLive }: { msg: Message; isLive?: boolea
     <div className="border border-slate-150 bg-slate-50/50 rounded-xl mb-3 overflow-hidden shadow-3xs max-w-2xl">
       <button
         type="button"
-        onClick={() => setManualOverride(!isOpen)}
+        onClick={() => setIsOpen(!isOpen)}
         className="w-full flex items-center justify-between px-4 py-2.5 bg-white hover:bg-slate-50 transition-colors text-left"
       >
         <div className="flex items-center gap-2 text-slate-700 min-w-0 flex-1">
           <span className="p-1 rounded-lg bg-indigo-50 text-indigo-600 shrink-0">
-            <BookOpen className="h-3.5 w-3.5" />
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-clipboard-list"><rect width="8" height="4" x="8" y="2" rx="1" ry="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="M12 11h4"/><path d="M12 16h4"/><path d="M8 11h.01"/><path d="M8 16h.01"/></svg>
           </span>
           <div className="flex flex-col min-w-0 flex-1">
-            <span className="text-xs font-semibold text-slate-800">{totalSteps} step{totalSteps === 1 ? "" : "s"}</span>
+            <span className="text-xs font-semibold text-slate-800">Action history</span>
             <span className="text-[10px] text-slate-500 truncate max-w-sm font-mono mt-0.5">
-              {isOpen ? "Here are the actions taken:" : `(${summaryText})`}
+              {isOpen ? "Here are key actions taken for the app:" : `(${summaryText})`}
             </span>
           </div>
         </div>
-        <span className="flex items-center gap-1 text-[11px] font-semibold text-slate-500 shrink-0">
-          {isOpen ? "Show less" : "Show more"}
-          <ChevronDown className={`h-4 w-4 text-slate-400 shrink-0 transition-transform duration-200 ${isOpen ? "transform rotate-180" : ""}`} />
-        </span>
+        <ChevronDown className={`h-4 w-4 text-slate-400 shrink-0 transition-transform duration-200 ${isOpen ? "transform rotate-180" : ""}`} />
       </button>
 
       {isOpen && (
-        <div className="px-4 pb-3.5 pt-1 border-t border-slate-100 bg-white font-mono text-xs text-slate-600 space-y-2.5 max-h-[280px] overflow-y-auto">
-          {hasPlanning && (
-            <div className="flex items-start gap-2 pb-2 border-b border-slate-50">
-              <span className="shrink-0 mt-0.5"><Brain className="h-3.5 w-3.5 text-violet-500" /></span>
-              <div>
-                <span className="font-semibold text-slate-800 block text-[11px]">Planning approach</span>
-                <span className="text-[9px] text-slate-400 italic">Thought for {msg.thoughtTimeSeconds}s</span>
-              </div>
-            </div>
-          )}
+        <div className="px-4 pb-3.5 pt-1 border-t border-slate-100 bg-white font-mono text-xs text-slate-600 space-y-2.5 max-h-[220px] overflow-y-auto">
           {msg.actionsTaken.map((action, idx) => {
-            let Icon = PenLine;
+            let icon = "📝";
+            let color = "text-emerald-600";
             let label = "";
 
             switch (action.type) {
               case 'create_folder':
-                Icon = FolderPlus;
+                icon = "📂";
                 label = `Created folder`;
+                color = "text-blue-600";
                 break;
               case 'create_file':
-                Icon = PenLine;
+                icon = "📝";
                 label = `Created file`;
+                color = "text-amber-600";
                 break;
               case 'edit_file':
-                Icon = PenLine;
+                icon = "✏️";
                 label = `Edited file`;
+                color = "text-indigo-600";
                 break;
               case 'run_command':
-                Icon = TerminalIcon;
+                icon = "⚙️";
                 label = `Ran command`;
+                color = "text-purple-600";
                 break;
               case 'build':
-                Icon = Hammer;
+                icon = "🛠️";
                 label = `Built`;
+                color = "text-emerald-600";
                 break;
-            }
-
-            // A "build" step is a natural phase boundary — render it as a
-            // section divider (like a step-kind log) instead of a plain row.
-            if (action.type === 'build') {
-              return (
-                <div key={idx} className="pt-2 first:pt-0">
-                  <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider border-b border-slate-100 pb-1.5 flex items-center gap-1.5">
-                    <Hammer className="h-3 w-3" /> {action.pathOrCommand}
-                  </div>
-                </div>
-              );
             }
 
             return (
               <div key={idx} className="flex items-start justify-between border-b border-slate-50 pb-2 last:border-b-0 last:pb-0">
                 <div className="flex items-start gap-2 max-w-[85%]">
-                  <span className="shrink-0 mt-0.5"><Icon className="h-3.5 w-3.5 text-indigo-500" /></span>
+                  <span className="text-sm shrink-0">{icon}</span>
                   <div>
                     <span className="font-semibold text-slate-800 block text-[11px]">{label}</span>
                     <span className="text-[9px] text-slate-500 break-all">{action.pathOrCommand}</span>
@@ -211,7 +181,7 @@ function ActionHistoryAccordion({ msg, isLive }: { msg: Message; isLive?: boolea
                 </div>
                 {action.success && (
                   <span className="text-emerald-500 shrink-0 font-bold text-[10px] flex items-center gap-0.5">
-                    <CheckCircle2 className="h-2.5 w-2.5" />
+                    <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-check-circle-2"><circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/></svg>
                     <span>done</span>
                   </span>
                 )}
@@ -390,20 +360,8 @@ export default function App() {
   const [currentTime, setCurrentTime] = useState("");
 
   const chatEndRef = useRef<HTMLDivElement>(null);
-  const chatScrollRef = useRef<HTMLDivElement>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
   const sseTimeoutRef = useRef<any>(null);
-
-  // Tracks whether the user has scrolled away from the bottom of the feed
-  // while a build is streaming, so we can surface a floating
-  // "Scroll to latest" pill instead of silently auto-scrolling underneath them.
-  const [isScrolledAway, setIsScrolledAway] = useState(false);
-  const handleFeedScroll = () => {
-    const el = chatScrollRef.current;
-    if (!el) return;
-    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-    setIsScrolledAway(distanceFromBottom > 160);
-  };
 
   // Chat History / Multi-session states
   const [activeSessionId, setActiveSessionId] = useState<string>(() => {
@@ -556,12 +514,10 @@ export default function App() {
     };
   }, []);
 
-  // Auto-scroll chat on new message or task activity, unless the user has
-  // deliberately scrolled up to read something above the live stream.
+  // Auto-scroll chat on new message or task activity
   useEffect(() => {
-    if (isScrolledAway) return;
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, tasks, isScrolledAway]);
+  }, [messages, tasks]);
 
   // Polling fallback: when a build is active, poll files + tasks every 5 s so
   // the Code view stays in sync even if SSE misses a broadcast (isolate split).
@@ -784,18 +740,6 @@ export default function App() {
       setFiles([]);
       setCurrentPrompt("");
     });
-  };
-
-  const handleCancelTask = async (taskId: string) => {
-    try {
-      await fetch(`${API_BASE}/api/tasks/cancel`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ taskId })
-      });
-    } catch (err) {
-      console.error("Failed to cancel task:", err);
-    }
   };
 
   const handleSendPrompt = async (e: React.FormEvent) => {
@@ -1343,7 +1287,7 @@ export default function App() {
                   </div>
 
                   {/* Unified Feed Scroll Area */}
-                  <div ref={chatScrollRef} onScroll={handleFeedScroll} className="flex-1 overflow-y-auto space-y-6 pr-1.5 scrollbar-thin pb-4">
+                  <div className="flex-1 overflow-y-auto space-y-6 pr-1.5 scrollbar-thin pb-4">
                     {timeline.map((item, index) => {
                       if (item.type === "message") {
                         const msg = item.data;
@@ -1413,10 +1357,7 @@ export default function App() {
                                 )}
                                 
                                 {/* Action History collapsible block */}
-                                <ActionHistoryAccordion
-                                  msg={msg}
-                                  isLive={index === timeline.length - 1 && tasks.some(t => t.status === "running")}
-                                />
+                                <ActionHistoryAccordion msg={msg} />
 
                                 <div className="text-gray-800 leading-relaxed text-sm p-4 bg-white border border-gray-150 rounded-2xl shadow-3xs">
                                   {renderMarkdownMessage(msg.content)}
@@ -1503,7 +1444,6 @@ export default function App() {
                                   isInitiallyExpanded={index === timeline.length - 1 || isRunning} 
                                   isLocked={isLocked}
                                   taskIndex={taskIndex}
-                                  onCancelTask={handleCancelTask}
                                 />
                               </div>
                             </div>
@@ -1535,41 +1475,6 @@ export default function App() {
 
                     <div ref={chatEndRef} />
                   </div>
-
-                  {/* Floating "Scroll to latest" pill: appears while a build is
-                      streaming and the user has scrolled away from the live feed,
-                      showing a compact icon cluster + running step count so they
-                      know what's happening without losing their scroll position. */}
-                  {isScrolledAway && (() => {
-                    const runningTask = stablySortedTasks.find(t => t.status === "running");
-                    if (!runningTask) return null;
-                    const liveStepCount = runningTask.subtasks.reduce((n, s) => n + (s.logs?.length ?? 0), 0);
-                    return (
-                      <div className="absolute bottom-2 left-1/2 -translate-x-1/2 z-40">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
-                            setIsScrolledAway(false);
-                          }}
-                          className="flex items-center gap-2.5 bg-white border border-gray-200 shadow-lg rounded-full pl-2 pr-4 py-1.5 hover:bg-gray-50 transition-all"
-                        >
-                          <span className="flex items-center gap-1 text-slate-500">
-                            <BookOpen className="h-3.5 w-3.5" />
-                            <Brain className="h-3.5 w-3.5" />
-                          </span>
-                          <span className="text-[11px] font-semibold text-slate-600 font-mono">
-                            {liveStepCount} action{liveStepCount === 1 ? "" : "s"}
-                          </span>
-                          <span className="h-4 w-px bg-gray-200" />
-                          <span className="flex items-center gap-1 text-[11px] font-bold text-indigo-600">
-                            <ArrowDown className="h-3.5 w-3.5" />
-                            Scroll to latest
-                          </span>
-                        </button>
-                      </div>
-                    );
-                  })()}
 
                   {/* Fixed bottom Input Bar */}
                   <div className="w-full bg-slate-50/90 pt-3 pb-1 border-t border-gray-150/50 z-30 shrink-0">

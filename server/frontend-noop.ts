@@ -7,6 +7,9 @@ export default {
   async fetch(): Promise<Response> {
     return new Response("Not found", { status: 404 });
   },
+  async scheduled(event: any, env: any, ctx: any) {
+    console.log("Sovereign Agent Frontend scheduled cron triggered successfully!");
+  }
 };
 
 // Legacy Durable Object classes from earlier iterations of this worker

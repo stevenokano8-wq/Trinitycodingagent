@@ -67,7 +67,23 @@ export async function planBuildTasks(userPrompt: string, env?: Partial<AppEnv>, 
     const existingFiles = await getFiles();
     const workspaceLayout = existingFiles.map(f => f.path).join(", ") || "None";
 
-    const systemInstruction = `You are a Principal Software Architect. Break down the user's prompt into an atomic array of clear execution tasks. Return ONLY valid JSON matching: { "tasks": [{ "name": "Task Title", "subtasks": ["subtask details"] }] }`;
+    const systemInstruction = `You are a Principal Software Architect. Your job is to break down the user's prompt into an atomic, sequential array of clear, actionable execution tasks.
+Return ONLY valid JSON matching exactly:
+{
+  "tasks": [
+    {
+      "name": "Task Title",
+      "subtasks": ["subtask description/target"]
+    }
+  ]
+}
+
+CRITICAL RULES:
+1. Only plan concrete, actionable file-system or coding tasks (e.g., "Create folder/directory src/utils", "Implement component src/components/Card.tsx", "Add route /api/users to server.ts").
+2. NEVER plan theoretical, conversational, explanatory, or administrative steps (e.g., "Choose tool", "Confirm environment", "Discuss layout", "Open terminal", "Wait for feedback").
+3. Keep task and subtask names short, professional, and descriptive.
+4. When folder creation is requested, the task and subtask must directly represent creating that folder (e.g. "Create src/components/MyFolder folder"). Do NOT make it a multi-step theoretical checklist.
+5. Have strong professional context awareness. Avoid generic placeholder names, redundant terms, or conversational phrases.`;
 
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash",
@@ -157,31 +173,82 @@ export async function executeAgentBuild(prompt: string, tasks: Task[], env?: Par
           const route = routeLLMTask(prompt, sub.name, attachment?.name);
           modelsUsed.add(route.model === "gemini-2.5-pro" ? "Pro" : "Flash");
 
-          // Determine paths dynamically
-          const isSchema = sub.name.toLowerCase().includes("schema");
-          const isApi = sub.name.toLowerCase().includes("api") || sub.name.toLowerCase().includes("endpoint");
-          const extension = isSchema ? "_schema.ts" : isApi ? "_api.ts" : "_component.tsx";
-          const folder = isSchema ? "src/db" : isApi ? "server/routes" : "src/components";
-          const targetPath = `${folder}/${sub.name.toLowerCase().replace(/[^a-z0-9]/g, "_").substring(0, 20)}${extension}`;
-
-          // Create parent folders
-          actionsTaken.push({ type: 'create_folder', pathOrCommand: folder, success: true });
-
           const currentFiles = await getFiles();
           const registryMap = currentFiles.map(f => f.path).join(", ");
 
-          // Call model to generate production-grade code block
-          const response = await ai.models.generateContent({
-            model: route.model,
-            contents: `Write a pure TypeScript/React file for: "${sub.name}" inside "${prompt}". Workspace layout: [${registryMap}]. DO NOT return markdown boxes or prose, output raw code starting immediately.`
-          });
+          // Determine paths dynamically using Gemini with professional context awareness!
+          let targetPath = "";
+          let language = "typescript";
+          try {
+            const pathPrompt = `You are a Principal Software Engineer.
+Determine the most appropriate file path (including correct folders and extension) and programming language to implement the subtask: "${sub.name}" for the overall request: "${prompt}".
+Existing workspace files: [${registryMap}].
 
-          let code = response.text || "";
-          if (code.startsWith("```")) {
-            const lines = code.split("\n");
-            if (lines[0].startsWith("```")) lines.shift();
-            if (lines[lines.length - 1].startsWith("```")) lines.pop();
-            code = lines.join("\n");
+Rules:
+- Choose standard professional paths (e.g., components in "src/components/", backend routes/apis in "server/routes/" or "server/api/", DB schema in "src/db/schema.ts" or "server/schema.ts").
+- Keep it highly professional and literal. DO NOT hardcode placeholder names like "determine_the_desire_co_component.tsx".
+- If the subtask is about folder creation, decide on the best name for the new folder based on its description, and return the folder path with a "/.gitkeep" file (e.g. "src/components/MyNewFolder/.gitkeep").
+- If the file type is JSON, return "json" as the language. If CSS, return "css". If TSX/TS/JS, return "typescript".
+
+Return ONLY a valid JSON object starting and ending with braces:
+{
+  "path": "the/file/path.ext",
+  "language": "typescript|json|css"
+}`;
+
+            const pathResponse = await ai.models.generateContent({
+              model: "gemini-2.5-flash",
+              contents: pathPrompt,
+              config: { responseMimeType: "application/json" }
+            });
+            
+            const pathResult = safeParseJSON(pathResponse.text || "{}");
+            if (pathResult.path) {
+              targetPath = pathResult.path.trim().replace(/^\/+/, ""); // remove leading slashes
+              language = pathResult.language || "typescript";
+            }
+          } catch (pathErr) {
+            console.error("Failed to dynamically determine path, using fallback:", pathErr);
+          }
+
+          // Fallback if dynamic resolution fails
+          if (!targetPath) {
+            const isSchema = sub.name.toLowerCase().includes("schema");
+            const isApi = sub.name.toLowerCase().includes("api") || sub.name.toLowerCase().includes("endpoint");
+            const extension = isSchema ? "_schema.ts" : isApi ? "_api.ts" : "_component.tsx";
+            const folder = isSchema ? "src/db" : isApi ? "server/routes" : "src/components";
+            targetPath = `${folder}/${sub.name.toLowerCase().replace(/[^a-z0-9]/g, "_").substring(0, 20)}${extension}`;
+          }
+
+          // Create parent folders
+          const folder = path.dirname(targetPath);
+          actionsTaken.push({ type: 'create_folder', pathOrCommand: folder, success: true });
+
+          // Call model to generate production-grade code block with strict formatting, error correction, and perfect indentation
+          let code = "";
+          if (targetPath.endsWith(".gitkeep")) {
+            code = "";
+          } else {
+            const response = await ai.models.generateContent({
+              model: route.model,
+              contents: `You are an elite, senior software engineer. Write a pure, complete, and production-grade implementation of the file "${targetPath}" to fulfill the subtask: "${sub.name}" under the user request: "${prompt}".
+
+Workspace files structure for context: [${registryMap}].
+
+CRITICAL REQUIREMENTS:
+1. INDENTATION & FORMATTING: Follow strict clean-code guidelines. Use consistent 2-space indentation. Maintain beautiful, readable spacing.
+2. SYNTAX & COMPILATION: Ensure all imports are resolved correctly from the workspace structure. Fix any typical typescript errors, make types precise, and avoid using 'any' unless necessary. No syntax errors, unbalanced braces, or missing brackets are tolerated.
+3. COMPLETENESS: Write the full, executable content of the file. DO NOT truncate the code, do not write comments like '// ... implement rest here', and do NOT include mock descriptions.
+4. RESPONSE FORMAT: Output ONLY the raw code content. DO NOT wrap the output in markdown code blocks like \`\`\`typescript or \`\`\`. Start writing the code immediately from the very first character of your response.`
+            });
+
+            code = response.text || "";
+            if (code.startsWith("```")) {
+              const lines = code.split("\n");
+              if (lines[0].startsWith("```")) lines.shift();
+              if (lines[lines.length - 1].startsWith("```")) lines.pop();
+              code = lines.join("\n");
+            }
           }
 
           const fileNode: FileNode = { path: targetPath, content: code, language: "typescript" };

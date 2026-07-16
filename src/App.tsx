@@ -1133,11 +1133,11 @@ export default function App() {
       <main className="flex-1 max-w-[1800px] w-full mx-auto p-4 sm:p-6 flex flex-col md:grid md:grid-cols-10 gap-6 min-h-0 relative overflow-hidden">
         
         {/* Left Column (active workspace view) */}
-        <div className={`md:col-span-4 flex flex-col min-h-0 h-full overflow-hidden ${activeTab === "preview" ? "hidden md:flex" : "flex flex-1"}`}>
+        <div className={`md:col-span-4 flex flex-col min-h-0 h-full overflow-hidden ${["preview", "code"].includes(activeTab) ? "hidden md:flex" : "flex flex-1"}`}>
           <AnimatePresence mode="wait">
           
           {/* 1. CHAT WORKSPACE VIEW */}
-          {activeTab === "chat" && (
+          {(activeTab === "chat" || activeTab === "code") && (
             <motion.div
               key="chat-panel"
               initial={{ opacity: 0, y: 15 }}
@@ -1587,18 +1587,7 @@ export default function App() {
             </motion.div>
           )}
 
-          {/* 3. CODE TAB VIEW */}
-          {activeTab === "code" && (
-            <motion.div
-              key="code-panel"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              className="flex-1 flex flex-col min-h-0"
-            >
-              <CodeView files={files} onUpdateFile={handleUpdateFile} />
-            </motion.div>
-          )}
+
 
           {/* 4. DATABASE TAB VIEW */}
           {activeTab === "database" && (
@@ -1733,8 +1722,12 @@ export default function App() {
         </div>
 
         {/* Right Column (always-on live preview for large screens; full-screen on mobile when Preview active) */}
-        <div className={`w-full md:col-span-6 flex flex-col min-h-0 h-full overflow-hidden ${activeTab === "faceswap" ? "hidden" : activeTab === "preview" ? "flex flex-1" : "hidden md:flex"}`}>
-          <PreviewView currentPrompt={currentPrompt} files={files} previewReloadKey={previewReloadKey} tasks={tasks} isSending={isSending} />
+        <div className={`w-full md:col-span-6 flex flex-col min-h-0 h-full overflow-hidden ${activeTab === "faceswap" ? "hidden" : ["preview", "code"].includes(activeTab) ? "flex flex-1" : "hidden md:flex"}`}>
+          {activeTab === "code" ? (
+            <CodeView files={files} onUpdateFile={handleUpdateFile} />
+          ) : (
+            <PreviewView currentPrompt={currentPrompt} files={files} previewReloadKey={previewReloadKey} tasks={tasks} isSending={isSending} />
+          )}
         </div>
 
       </main>

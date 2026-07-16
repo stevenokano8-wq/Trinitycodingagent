@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { FileNode } from "../types.js";
-import { FileText, Folder, HardDrive, Edit3, Code, Save, Check, Menu, ArrowLeft, Laptop } from "lucide-react";
+import { FileText, Folder, HardDrive, Edit3, Code, Save, Check, Menu, ArrowLeft, Laptop, FolderPlus, FilePlus, X, Plus } from "lucide-react";
 
 interface CodeViewProps {
   files: FileNode[];
@@ -26,6 +26,12 @@ export default function CodeView({ files, onUpdateFile }: CodeViewProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [isSavedSuccessfully, setIsSavedSuccessfully] = useState(false);
   const [mobileView, setMobileView] = useState<"tree" | "editor">("tree");
+
+  // Creation States
+  const [isCreatingFolder, setIsCreatingFolder] = useState(false);
+  const [isCreatingFile, setIsCreatingFile] = useState(false);
+  const [newItemName, setNewItemName] = useState("");
+  const [newItemError, setNewItemError] = useState("");
 
   // Ref trackers for auto-detecting updates from agent
   const prevFilesLengthRef = React.useRef(files.length);
@@ -71,6 +77,59 @@ export default function CodeView({ files, onUpdateFile }: CodeViewProps) {
     }
   };
 
+  const handleCreateFolder = () => {
+    if (!newItemName.trim()) {
+      setNewItemError("Folder name cannot be empty");
+      return;
+    }
+    let folderPath = newItemName.trim().replace(/\/+$/, ""); // remove trailing slashes
+    // Default prefix if none is provided
+    if (!folderPath.startsWith("src/") && !folderPath.startsWith("server/") && !folderPath.startsWith("public/")) {
+      folderPath = `src/components/${folderPath}`;
+    }
+    
+    const targetFilePath = `${folderPath}/.gitkeep`;
+    
+    if (files.some(f => f.path.startsWith(folderPath + "/"))) {
+      setNewItemError("Folder path already exists");
+      return;
+    }
+
+    onUpdateFile(targetFilePath, "");
+    setSelectedFilePath(targetFilePath);
+    setIsCreatingFolder(false);
+    setNewItemName("");
+    setNewItemError("");
+  };
+
+  const handleCreateFile = () => {
+    if (!newItemName.trim()) {
+      setNewItemError("File name cannot be empty");
+      return;
+    }
+    let filePath = newItemName.trim();
+    // Default prefix if none is provided
+    if (!filePath.startsWith("src/") && !filePath.startsWith("server/") && !filePath.startsWith("public/")) {
+      filePath = `src/components/${filePath}`;
+    }
+
+    // Default extension if none is provided
+    if (!filePath.includes(".")) {
+      filePath = `${filePath}.tsx`;
+    }
+
+    if (files.some(f => f.path === filePath)) {
+      setNewItemError("File path already exists");
+      return;
+    }
+
+    onUpdateFile(filePath, "");
+    setSelectedFilePath(filePath);
+    setIsCreatingFile(false);
+    setNewItemName("");
+    setNewItemError("");
+  };
+
   return (
     <div id="code-view-container" className="flex flex-col md:flex-row flex-1 h-full min-h-[500px] border border-gray-100 rounded-3xl bg-white overflow-hidden shadow-xs">
       
@@ -78,14 +137,109 @@ export default function CodeView({ files, onUpdateFile }: CodeViewProps) {
       <div className={`w-full md:w-64 border-r border-gray-50 bg-gray-50/50 p-4 flex flex-col h-full ${
         mobileView === "editor" ? "hidden md:flex" : "flex"
       }`}>
-        <div className="flex items-center justify-between pb-4 border-b border-gray-150 mb-3">
-          <div className="flex items-center gap-2">
-            <HardDrive className="h-4 w-4 text-gray-500" />
-            <span className="text-xs font-bold tracking-wider uppercase text-gray-500 font-mono">Workspace Storage</span>
+        <div className="flex items-center justify-between pb-3 border-b border-gray-150 mb-3">
+          <div className="flex items-center gap-2 min-w-0">
+            <HardDrive className="h-3.5 w-3.5 text-gray-500 shrink-0" />
+            <span className="text-[10px] font-bold tracking-wider uppercase text-gray-500 font-mono truncate">Workspace</span>
+          </div>
+          <div className="flex items-center gap-1 shrink-0">
+            <button
+              id="btn-trigger-folder-creation"
+              onClick={() => {
+                setIsCreatingFolder(true);
+                setIsCreatingFile(false);
+                setNewItemName("");
+                setNewItemError("");
+              }}
+              className="p-1 hover:bg-gray-200 rounded text-gray-500 hover:text-gray-900 transition-all cursor-pointer"
+              title="New Folder (.gitkeep)"
+            >
+              <FolderPlus className="h-3.5 w-3.5" />
+            </button>
+            <button
+              id="btn-trigger-file-creation"
+              onClick={() => {
+                setIsCreatingFile(true);
+                setIsCreatingFolder(false);
+                setNewItemName("");
+                setNewItemError("");
+              }}
+              className="p-1 hover:bg-gray-200 rounded text-gray-500 hover:text-gray-900 transition-all cursor-pointer"
+              title="New File"
+            >
+              <FilePlus className="h-3.5 w-3.5" />
+            </button>
           </div>
           {/* Mobile view only helper */}
           <span className="md:hidden text-[10px] bg-gray-200 text-gray-600 px-2 py-0.5 rounded-full font-bold">Explorer</span>
         </div>
+
+        {/* Inline Folder/File Creation UI */}
+        {(isCreatingFolder || isCreatingFile) && (
+          <div className="bg-white border border-gray-200 rounded-xl p-2.5 mb-3 space-y-2 shadow-xs animate-fade-in">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-bold text-gray-400 font-mono uppercase">
+                {isCreatingFolder ? "New Folder Path" : "New File Path"}
+              </span>
+              <button
+                onClick={() => {
+                  setIsCreatingFolder(false);
+                  setIsCreatingFile(false);
+                  setNewItemName("");
+                  setNewItemError("");
+                }}
+                className="text-gray-400 hover:text-gray-600 transition-colors"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </div>
+            
+            <input
+              id="input-new-item-name"
+              type="text"
+              placeholder={isCreatingFolder ? "e.g., my_new_folder" : "e.g., Button.tsx"}
+              value={newItemName}
+              onChange={(e) => {
+                setNewItemName(e.target.value);
+                setNewItemError("");
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  if (isCreatingFolder) handleCreateFolder();
+                  else handleCreateFile();
+                }
+              }}
+              className="w-full bg-gray-50 border border-gray-200 rounded-lg px-2 py-1.5 text-xs font-mono text-gray-800 placeholder-gray-400 focus:outline-none focus:border-gray-400"
+              autoFocus
+            />
+            
+            {newItemError && (
+              <p className="text-[9px] text-red-500 font-mono leading-none">{newItemError}</p>
+            )}
+            
+            <div className="flex justify-end gap-1.5">
+              <button
+                id="btn-cancel-create"
+                onClick={() => {
+                  setIsCreatingFolder(false);
+                  setIsCreatingFile(false);
+                  setNewItemName("");
+                  setNewItemError("");
+                }}
+                className="px-2 py-1 text-[10px] text-gray-500 hover:text-gray-800 font-medium"
+              >
+                Cancel
+              </button>
+              <button
+                id="btn-confirm-create"
+                onClick={isCreatingFolder ? handleCreateFolder : handleCreateFile}
+                className="bg-gray-900 text-white hover:bg-gray-800 px-2.5 py-1 rounded-md text-[10px] font-bold flex items-center gap-1 shadow-xs"
+              >
+                <Check className="h-3 w-3" /> Create
+              </button>
+            </div>
+          </div>
+        )}
 
         {files.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-10 text-center px-4">

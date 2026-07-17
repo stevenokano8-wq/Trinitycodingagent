@@ -37,8 +37,16 @@ export interface KVNamespace {
 
 // Cloudflare Workers AI binding (declared as [ai] in wrangler.api.toml).
 // Used for fast task-planning (division of labor); Gemini handles code synthesis.
+//
+// Different CF AI models return different response shapes via the binding:
+//   - Llama 3.x / chat models  → { choices: [{ message: { content: "..." } }] }
+//   - Some older/gateway models → { response: "..." }
+// AiTextResponse covers both; extractCfAiText() reads whichever field is present.
 export interface AiTextResponse {
-  response: string;
+  // OpenAI-style (llama-3.x-70b-instruct-fp8-fast, 3b, etc.)
+  choices?: Array<{ message?: { content?: string } }>;
+  // Legacy flat field (some older CF AI models)
+  response?: string;
 }
 export interface AiChatMessage {
   role: "system" | "user" | "assistant";
@@ -46,6 +54,11 @@ export interface AiChatMessage {
 }
 export interface AiBinding {
   run(model: string, input: { messages?: AiChatMessage[]; prompt?: string; max_tokens?: number }): Promise<AiTextResponse>;
+}
+
+/** Extract the text content from a CF AI binding response regardless of shape. */
+export function extractCfAiText(result: AiTextResponse): string {
+  return result.choices?.[0]?.message?.content ?? result.response ?? "";
 }
 
 export interface AppEnv {

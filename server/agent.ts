@@ -2,7 +2,7 @@ import { GoogleGenAI } from "@google/genai";
 import { Task, Subtask, FileNode, Message } from "../src/types.js"; // Match local file extension rules (.ts/.js)
 import { saveTask, saveFile, addMessage, getFiles, getMessages } from "./db.js";
 import { executeGitPush } from "./github.js";
-import { AppEnv, AiBinding, AiChatMessage, resolveEnvWithOverrides } from "./env.js";
+import { AppEnv, AiBinding, AiChatMessage, extractCfAiText, resolveEnvWithOverrides } from "./env.js";
 import { routeLLMTask } from "./llmRouter.js";
 import { executeTerminalCommand, isCommandSafe } from "./command.js";
 import fs from "fs";
@@ -43,7 +43,8 @@ async function runCfAi(
   maxTokens = 1024
 ): Promise<string> {
   const result = await ai.run(CF_PLAN_MODEL, { messages, max_tokens: maxTokens });
-  return result.response ?? "";
+  // extractCfAiText handles both OpenAI-style choices[] and legacy response field
+  return extractCfAiText(result);
 }
 
 // Convenience: run a planning prompt, preferring CF AI over Gemini Flash.

@@ -56,16 +56,36 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: echo "$GEMINI_API_KEY" | npx wrangler secret put GEMINI_API_KEY --config wrangler.api.toml
 
-      # Re-pin the custom domain → worker binding after every deploy.
-      # Cloudflare drops this binding on each fresh wrangler deploy, so we
-      # must re-create it via the Workers Domains API to keep
-      # agent-api.trinityuniverse.org routed to sovereign-agent-api.
-      - name: Re-bind sovereign-agent-api custom domain
+      # Re-pin both custom domain → worker bindings after every deploy.
+      # Cloudflare can drop bindings on a fresh wrangler deploy, so we
+      # explicitly enforce the correct state via the Workers Domains API:
+      #   agent.trinityuniverse.org     → sovereign-agent     (frontend SPA)
+      #   agent-api.trinityuniverse.org → sovereign-agent-api (Hono REST API)
+      #
+      # Both DNS records (AAAA 100::, proxied) exist in the trinityuniverse.org zone.
+      # The agent-api record was created 2026-07-17 — do NOT delete it from DNS.
+      - name: Re-bind custom domains to correct workers
         run: |
-          curl -s -X PUT \
-            "https://api.cloudflare.com/client/v4/accounts/${{ secrets.CLOUDFLARE_ACCOUNT_ID }}/workers/domains" \
-            -H "Authorization: Bearer ${{ secrets.CLOUDFLARE_API_TOKEN }}" \
-            -H "Content-Type: application/json" \
-            -d '{"service":"sovereign-agent-api","zone_id":"3b68b597a92d1e970af9aab1d0f6e91e","hostname":"agent-api.trinityuniverse.org","environment":"production"}' \
-            | node -e "const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')); process.exit(d.success ? 0 : 1)"
-          echo "✅ Custom domain binding restored: agent-api.trinityuniverse.org → sovereign-agent-api"
+          ZONE_ID="3b68b597a92d1e970af9aab1d0f6e91e"
+          ACCOUNT_ID="${{ secrets.CLOUDFLARE_ACCOUNT_ID }}"
+          API_TOKEN="${{ secrets.CLOUDFLARE_API_TOKEN }}"
+
+          bind() {
+            local service=$1 hostname=$2
+            local result
+            result=$(curl -s -X PUT \
+              "https://api.cloudflare.com/client/v4/accounts/${ACCOUNT_ID}/workers/domains" \
+              -H "Authorization: Bearer ${API_TOKEN}" \
+              -H "Content-Type: application/json" \
+              -d "{\"service\":\"${service}\",\"zone_id\":\"${ZONE_ID}\",\"hostname\":\"${hostname}\",\"environment\":\"production\"}")
+            if node -e "const d=JSON.parse(process.argv[1]); process.exit(d.success ? 0 : 1)" "$result"; then
+              echo "✅ ${hostname} → ${service}"
+            else
+              echo "❌ Failed to bind ${hostname} → ${service}"
+              echo "$result"
+              exit 1
+            fi
+          }
+
+          bind sovereign-agent     agent.trinityuniverse.org
+          bind sovereign-agent-api agent-api.trinityuniverse.org

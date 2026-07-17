@@ -35,26 +35,6 @@ async function ensureInit(env: Bindings) {
   initialized = true;
 }
 
-// Diagnostic endpoint: test CF AI binding directly, returns raw result or error
-app.get("/api/test-ai", async (c) => {
-  const aiBinding = c.env.AI;
-  if (!aiBinding) {
-    return c.json({ ai_binding: "undefined", error: "env.AI is not set — binding missing" });
-  }
-  try {
-    const result = await aiBinding.run("@cf/meta/llama-3.1-8b-instruct", {
-      messages: [
-        { role: "system", content: "Reply with valid JSON only: {\"ok\":true}" },
-        { role: "user", content: "ping" },
-      ],
-      max_tokens: 64,
-    });
-    return c.json({ ai_binding: "present", raw_result: result });
-  } catch (err: any) {
-    return c.json({ ai_binding: "present", error: err?.message ?? String(err) }, 500);
-  }
-});
-
 app.get("/api/db-status", async (c) => {
   await ensureInit(c.env);
   return c.json({

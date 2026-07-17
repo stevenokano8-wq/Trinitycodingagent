@@ -34,7 +34,8 @@ export function getGeminiClient(env?: Partial<AppEnv>): GoogleGenAI {
 // determination.  Gemini handles heavy code synthesis.  Locally (pnpm dev,
 // no binding), this falls back to a Gemini Flash call so dev still works.
 
-const CF_PLAN_MODEL = "@cf/meta/llama-3.1-8b-instruct";
+// llama-3.1-8b-instruct was deprecated 2026-05-30; use the fp8-fast 70B instead.
+const CF_PLAN_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
 
 async function runCfAi(
   ai: AiBinding,

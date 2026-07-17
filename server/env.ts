@@ -72,6 +72,9 @@ export function resolveEnv(env?: Partial<AppEnv>): AppEnv {
   return {
     DB: env?.DB,
     CACHE_KV: env?.CACHE_KV,
+    // AI binding is a Cloudflare platform binding — pass it through as-is.
+    // Undefined in local Node dev (pnpm dev); present in wrangler dev and production.
+    AI: env?.AI,
     GEMINI_API_KEY: env?.GEMINI_API_KEY ?? proc.GEMINI_API_KEY,
     GITHUB_TOKEN: env?.GITHUB_TOKEN ?? proc.GITHUB_TOKEN ?? "",
     GITHUB_REPO_URL: env?.GITHUB_REPO_URL ?? proc.GITHUB_REPO_URL ?? "",
@@ -83,9 +86,9 @@ export function resolveEnv(env?: Partial<AppEnv>): AppEnv {
 // same "local fallback" philosophy as the in-memory DB/cache, with the same
 // caveat: they don't survive a Worker isolate recycle or a fresh Node process.
 // Only the plain string fields (Gemini/GitHub) are eligible for runtime
-// overrides — D1/KV are bindings fixed at deploy time and cannot be swapped
-// at runtime.
-type OverridableAppEnv = Omit<AppEnv, "DB" | "CACHE_KV">;
+// overrides — D1/KV/AI are bindings fixed at deploy time and cannot be
+// swapped at runtime.
+type OverridableAppEnv = Omit<AppEnv, "DB" | "CACHE_KV" | "AI">;
 let runtimeOverrides: Partial<OverridableAppEnv> = {};
 
 export function setRuntimeOverrides(patch: Partial<OverridableAppEnv>) {

@@ -1,0 +1,91 @@
+name: Deploy to Cloudflare Workers
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Upgrade npm
+        # Works around a known npm 10.8.x bug ("Exit handler never called!")
+        # that intermittently crashes `npm ci` on installs with platform-
+        # specific optional deps (wrangler/esbuild/workerd binaries).
+        run: npm install -g npm@11
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run lint
+
+      - name: Build frontend
+        run: npx vite build
+
+      - name: Deploy frontend worker (sovereign-agent)
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: deploy --config wrangler.toml
+
+      - name: Deploy API worker (sovereign-agent-api)
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: deploy --config wrangler.api.toml
+
+      - name: Seed GEMINI_API_KEY into sovereign-agent-api
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: echo "$GEMINI_API_KEY" | npx wrangler secret put GEMINI_API_KEY --config wrangler.api.toml
+
+      # Re-pin both custom domain → worker bindings after every deploy.
+      # Cloudflare can drop bindings on a fresh wrangler deploy, so we
+      # explicitly enforce the correct state via the Workers Domains API:
+      #   agent.trinityuniverse.org     → sovereign-agent     (frontend SPA)
+      #   agent-api.trinityuniverse.org → sovereign-agent-api (Hono REST API)
+      #
+      # Both DNS records (AAAA 100::, proxied) exist in the trinityuniverse.org zone.
+      # The agent-api record was created 2026-07-17 — do NOT delete it from DNS.
+      - name: Re-bind custom domains to correct workers
+        run: |
+          ZONE_ID="3b68b597a92d1e970af9aab1d0f6e91e"
+          ACCOUNT_ID="${{ secrets.CLOUDFLARE_ACCOUNT_ID }}"
+          API_TOKEN="${{ secrets.CLOUDFLARE_API_TOKEN }}"
+
+          bind() {
+            local service=$1 hostname=$2
+            local result
+            result=$(curl -s -X PUT \
+              "https://api.cloudflare.com/client/v4/accounts/${ACCOUNT_ID}/workers/domains" \
+              -H "Authorization: Bearer ${API_TOKEN}" \
+              -H "Content-Type: application/json" \
+              -d "{\"service\":\"${service}\",\"zone_id\":\"${ZONE_ID}\",\"hostname\":\"${hostname}\",\"environment\":\"production\"}")
+            if node -e "const d=JSON.parse(process.argv[1]); process.exit(d.success ? 0 : 1)" "$result"; then
+              echo "✅ ${hostname} → ${service}"
+            else
+              echo "❌ Failed to bind ${hostname} → ${service}"
+              echo "$result"
+              exit 1
+            fi
+          }
+
+          bind sovereign-agent     agent.trinityuniverse.org
+          bind sovereign-agent-api agent-api.trinityuniverse.org

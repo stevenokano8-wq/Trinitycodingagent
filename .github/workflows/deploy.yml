@@ -49,6 +49,13 @@ jobs:
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           command: deploy --config wrangler.api.toml
 
+      - name: Seed GEMINI_API_KEY into sovereign-agent-api
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: echo "$GEMINI_API_KEY" | npx wrangler secret put GEMINI_API_KEY --config wrangler.api.toml
+
       # Re-pin the custom domain → worker binding after every deploy.
       # Cloudflare drops this binding on each fresh wrangler deploy, so we
       # must re-create it via the Workers Domains API to keep

@@ -2,7 +2,7 @@ import { GoogleGenAI } from "@google/genai";
 import { Task, Subtask, FileNode, Message } from "../src/types.js"; // Match local file extension rules (.ts/.js)
 import { saveTask, saveFile, addMessage, getFiles, getMessages } from "./db.js";
 import { executeGitPush } from "./github.js";
-import { AppEnv, resolveEnvWithOverrides } from "./env.js";
+import { AppEnv, AiBinding, AiChatMessage, resolveEnvWithOverrides } from "./env.js";
 import { routeLLMTask } from "./llmRouter.js";
 import { executeTerminalCommand, isCommandSafe } from "./command.js";
 import fs from "fs";
@@ -24,6 +24,53 @@ export function getGeminiClient(env?: Partial<AppEnv>): GoogleGenAI {
     aiClientKey = key;
   }
   return aiClient;
+}
+
+// ---------------------------------------------------------------------------
+// Cloudflare Workers AI helper
+// ---------------------------------------------------------------------------
+// When env.AI (the [ai] binding declared in wrangler.api.toml) is present we
+// use it for lightweight tasks — task planning, path resolution, command
+// determination.  Gemini handles heavy code synthesis.  Locally (pnpm dev,
+// no binding), this falls back to a Gemini Flash call so dev still works.
+
+const CF_PLAN_MODEL = "@cf/meta/llama-3.1-8b-instruct";
+
+async function runCfAi(
+  ai: AiBinding,
+  messages: AiChatMessage[],
+  maxTokens = 1024
+): Promise<string> {
+  const result = await ai.run(CF_PLAN_MODEL, { messages, max_tokens: maxTokens });
+  return result.response ?? "";
+}
+
+// Convenience: run a planning prompt, preferring CF AI over Gemini Flash.
+async function runPlanningPrompt(
+  systemPrompt: string,
+  userContent: string,
+  env?: Partial<AppEnv>,
+  maxTokens = 2048
+): Promise<string> {
+  const resolved = resolveEnvWithOverrides(env);
+
+  if (resolved.AI) {
+    // Use Cloudflare Workers AI binding (no API key cost, edge-native)
+    const messages: AiChatMessage[] = [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: userContent },
+    ];
+    return runCfAi(resolved.AI, messages, maxTokens);
+  }
+
+  // Fallback: Gemini Flash (used in local `pnpm dev` without a KV/D1/AI binding)
+  const ai = getGeminiClient(env);
+  const response = await ai.models.generateContent({
+    model: "gemini-2.5-flash",
+    contents: userContent,
+    config: { systemInstruction: systemPrompt, responseMimeType: "application/json" }
+  });
+  return response.text ?? "";
 }
 
 export const sseClients = new Set<any>();
@@ -114,10 +161,11 @@ function buildConversationContext(messages: Message[], maxMessages = 6): string 
   return `\nRecent conversation history:\n${lines.join("\n")}`;
 }
 
-// 1. Dynamic Task Planner
+// ---------------------------------------------------------------------------
+// 1. Dynamic Task Planner — uses Cloudflare AI binding when available
+// ---------------------------------------------------------------------------
 export async function planBuildTasks(userPrompt: string, env?: Partial<AppEnv>, attachment?: any): Promise<Task[]> {
   try {
-    const ai = getGeminiClient(env);
     const existingFiles = await getFiles();
     const workspaceLayout = existingFiles.map(f => f.path).join(", ") || "None";
 
@@ -141,13 +189,12 @@ CRITICAL RULES:
 6. Order tasks so dependencies come FIRST. If TaskB imports from TaskA, TaskA must appear earlier.
 7. After code generation tasks, include a "Validate & install dependencies" subtask when new npm packages are needed.`;
 
-    const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
-      contents: `Plan tasks for: "${userPrompt}"\nWorkspace: ${workspaceLayout}`,
-      config: { systemInstruction, responseMimeType: "application/json" }
-    });
+    const userContent = `Plan tasks for: "${userPrompt}"\nWorkspace: ${workspaceLayout}`;
 
-    const result = safeParseJSON(response.text || "{}");
+    // Use CF AI binding for planning (lightweight) — falls back to Gemini Flash locally
+    const rawText = await runPlanningPrompt(systemInstruction, userContent, env, 2048);
+    const result = safeParseJSON(rawText);
+
     return result.tasks.map((t: any, idx: number) => {
       const taskId = `task-${Date.now()}-${idx}`;
       return {
@@ -261,6 +308,7 @@ async function validateGeneratedFile(filePath: string, sub: Subtask, task: Task)
 /**
  * Generate code for a subtask with full context — existing file contents + conversation history.
  * Returns the generated code string.
+ * Code synthesis always uses Gemini (heavy reasoning required).
  */
 async function generateSubtaskCode(
   ai: GoogleGenAI,
@@ -312,12 +360,18 @@ ${workspaceContext}`;
   return code;
 }
 
+// ---------------------------------------------------------------------------
 // 2. Real-World Sequential Execution Loop
+// ---------------------------------------------------------------------------
 export async function executeAgentBuild(prompt: string, tasks: Task[], env?: Partial<AppEnv>, attachment?: any) {
   const startTime = Date.now();
   const modelsUsed = new Set<string>();
   const actionsTaken: any[] = [];
   activeCancellationSignal = { aborted: false, taskId: "" };
+
+  // Resolve CF AI binding once for this build run
+  const resolved = resolveEnvWithOverrides(env);
+  const cfAi = resolved.AI ?? null;
 
   try {
     // Immediately display the UI Blueprint
@@ -363,25 +417,30 @@ export async function executeAgentBuild(prompt: string, tasks: Task[], env?: Par
 
         if (isCommandTask) {
           try {
-            // Ask Gemini to determine the best command to run
-            const ai = getGeminiClient(env);
             const currentFiles = await getFiles();
-            const cmdPrompt = `You are a DevOps expert. Determine the best terminal shell command to execute for the task: "${sub.name}" in the context of request: "${prompt}".
-Existing workspace files: [${currentFiles.map(f => f.path).join(", ")}]
 
-Rules:
-- Return a single shell command as a plain string (no markdown, no explanation, no code fences).
-- The command must be safe, non-interactive, and not require user input.
-- Prefer npm/npx commands for JavaScript/TypeScript tasks.
-- If it's a folder creation task, use: mkdir -p <path>
-- If no meaningful command applies, return: echo "No command needed"`;
+            // Use CF AI for command determination when available; Gemini Flash as fallback
+            let command: string;
+            const cmdSystemPrompt = `You are a DevOps expert. Determine the best terminal shell command to execute for the given task. Rules: Return a single shell command as a plain string (no markdown, no explanation, no code fences). The command must be safe, non-interactive, and not require user input. Prefer npm/npx commands for JavaScript/TypeScript tasks. If it's a folder creation task, use: mkdir -p <path>. If no meaningful command applies, return: echo "No command needed"`;
+            const cmdUserContent = `Task: "${sub.name}" in the context of request: "${prompt}". Existing workspace files: [${currentFiles.map(f => f.path).join(", ")}]. Return only the shell command string.`;
 
-            const cmdResponse = await ai.models.generateContent({
-              model: "gemini-2.5-flash",
-              contents: cmdPrompt,
-            });
-
-            let command = (cmdResponse.text || "echo 'No command needed'").trim().replace(/^```[\w]*\n?/, "").replace(/\n?```$/, "").trim();
+            if (cfAi) {
+              const cfResponse = await runCfAi(
+                cfAi,
+                [{ role: "system", content: cmdSystemPrompt }, { role: "user", content: cmdUserContent }],
+                256
+              );
+              command = cfResponse.trim().replace(/^```[\w]*\n?/, "").replace(/\n?```$/, "").trim();
+              modelsUsed.add("CF-AI");
+            } else {
+              const ai = getGeminiClient(env);
+              const cmdResponse = await ai.models.generateContent({
+                model: "gemini-2.5-flash",
+                contents: `${cmdSystemPrompt}\n\n${cmdUserContent}`,
+              });
+              command = (cmdResponse.text || "echo 'No command needed'").trim().replace(/^```[\w]*\n?/, "").replace(/\n?```$/, "").trim();
+              modelsUsed.add("Flash");
+            }
 
             sub.logs.push(`[CMD] Preparing to execute: ${command}`);
             broadcastSSE("subtask_log", { subtaskId: sub.id, log: sub.logs[sub.logs.length - 1] });
@@ -414,7 +473,7 @@ Rules:
           continue;
         }
 
-        // Normal code generation subtask
+        // Normal code generation subtask — always uses Gemini (heavy synthesis)
         try {
           const ai = getGeminiClient(env);
           const route = routeLLMTask(prompt, sub.name, attachment?.name);
@@ -423,34 +482,32 @@ Rules:
           const currentFiles = await getFiles();
           const conversationHistory = await getMessages();
 
-          // Determine target file path dynamically
+          // Determine target file path — use CF AI when available, Gemini Flash as fallback
           let targetPath = "";
           let language = "typescript";
           try {
             const registryMap = currentFiles.map(f => f.path).join(", ");
-            const pathPrompt = `You are a Principal Software Engineer.
-Determine the most appropriate file path (including correct folders and extension) and programming language to implement the subtask: "${sub.name}" for the overall request: "${prompt}".
-Existing workspace files: [${registryMap}].
+            const pathSystemPrompt = `You are a Principal Software Engineer. Determine the most appropriate file path (including correct folders and extension) and programming language to implement the given subtask. Rules: Choose standard professional paths (e.g., components in "src/components/", backend routes/apis in "server/routes/" or "server/api/", DB schema in "src/db/schema.ts" or "server/schema.ts"). Keep it highly professional and literal. DO NOT hardcode placeholder names. If the subtask is about folder creation, return the folder path with a "/.gitkeep" file. Return ONLY valid JSON: {"path": "the/file/path.ext", "language": "typescript|json|css"}`;
+            const pathUserContent = `Subtask: "${sub.name}" for overall request: "${prompt}". Existing files: [${registryMap}]. Return only the JSON object.`;
 
-Rules:
-- Choose standard professional paths (e.g., components in "src/components/", backend routes/apis in "server/routes/" or "server/api/", DB schema in "src/db/schema.ts" or "server/schema.ts").
-- Keep it highly professional and literal. DO NOT hardcode placeholder names like "determine_the_desire_co_component.tsx".
-- If the subtask is about folder creation, decide on the best name for the new folder based on its description, and return the folder path with a "/.gitkeep" file (e.g. "src/components/MyNewFolder/.gitkeep").
-- If the file type is JSON, return "json" as the language. If CSS, return "css". If TSX/TS/JS, return "typescript".
+            let pathRaw: string;
+            if (cfAi) {
+              pathRaw = await runCfAi(
+                cfAi,
+                [{ role: "system", content: pathSystemPrompt }, { role: "user", content: pathUserContent }],
+                256
+              );
+              modelsUsed.add("CF-AI");
+            } else {
+              const pathResponse = await ai.models.generateContent({
+                model: "gemini-2.5-flash",
+                contents: pathUserContent,
+                config: { systemInstruction: pathSystemPrompt, responseMimeType: "application/json" }
+              });
+              pathRaw = pathResponse.text ?? "";
+            }
 
-Return ONLY a valid JSON object starting and ending with braces:
-{
-  "path": "the/file/path.ext",
-  "language": "typescript|json|css"
-}`;
-
-            const pathResponse = await ai.models.generateContent({
-              model: "gemini-2.5-flash",
-              contents: pathPrompt,
-              config: { responseMimeType: "application/json" }
-            });
-            
-            const pathResult = safeParseJSON(pathResponse.text || "{}");
+            const pathResult = safeParseJSON(pathRaw);
             if (pathResult.path) {
               targetPath = pathResult.path.trim().replace(/^\/+/, ""); // remove leading slashes
               language = pathResult.language || "typescript";
@@ -472,7 +529,7 @@ Return ONLY a valid JSON object starting and ending with braces:
           const folder = path.dirname(targetPath);
           actionsTaken.push({ type: 'create_folder', pathOrCommand: folder, success: true });
 
-          // Generate code
+          // Generate code — always Gemini for code synthesis
           let code = "";
           let generationError: string | undefined;
 
@@ -594,15 +651,16 @@ Return ONLY a valid JSON object starting and ending with braces:
       gitReport = push.success ? `\n\n🔄 Committed successfully to remote repository.` : `\n\n⚠️ Git sync deferred: ${push.message}`;
     }
 
+    const planningLabel = cfAi ? "CF-AI + Gemini" : "Gemini";
     const totalSec = Math.round((Date.now() - startTime) / 1000);
     const finalMsg: Message = {
       id: `msg-${Date.now()}-done`,
       role: "assistant",
-      content: `### ✅ Build Completed Successfully\n\nAll tasks completed in ${totalSec}s.${gitReport}`,
+      content: `### ✅ Build Completed Successfully\n\nAll tasks completed in ${totalSec}s.\n**Planning:** Cloudflare Workers AI (${CF_PLAN_MODEL})\n**Code synthesis:** Gemini [${Array.from(modelsUsed).filter(m => m !== "CF-AI").join(" + ")}]${gitReport}`,
       timestamp: new Date().toISOString(),
       actionsTaken,
       thoughtTimeSeconds: 1.5,
-      modelName: `Gemini [${Array.from(modelsUsed).join(" + ")}]`,
+      modelName: planningLabel,
       durationSeconds: totalSec
     };
     await addMessage(finalMsg);

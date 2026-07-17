@@ -1,9 +1,10 @@
 import { GoogleGenAI } from "@google/genai";
 import { Task, Subtask, FileNode, Message } from "../src/types.js"; // Match local file extension rules (.ts/.js)
-import { saveTask, saveFile, addMessage, getFiles } from "./db.js";
+import { saveTask, saveFile, addMessage, getFiles, getMessages } from "./db.js";
 import { executeGitPush } from "./github.js";
 import { AppEnv, resolveEnvWithOverrides } from "./env.js";
 import { routeLLMTask } from "./llmRouter.js";
+import { executeTerminalCommand, isCommandSafe } from "./command.js";
 import fs from "fs";
 import path from "path";
 
@@ -60,6 +61,59 @@ export function cancelActiveBuild(taskId: string) {
   activeCancellationSignal.taskId = taskId;
 }
 
+/**
+ * Read a file from disk and return its content, or null if unavailable.
+ */
+function readFileContent(filePath: string): string | null {
+  try {
+    if (typeof process !== "undefined" && fs && fs.existsSync) {
+      const resolved = path.resolve(process.cwd(), filePath);
+      if (resolved.startsWith(process.cwd()) && fs.existsSync(resolved)) {
+        return fs.readFileSync(resolved, "utf8");
+      }
+    }
+  } catch (_) {}
+  return null;
+}
+
+/**
+ * Build a rich workspace context string — includes file paths AND their contents
+ * (truncated for large files) so the LLM can understand existing code before generating.
+ */
+function buildWorkspaceContext(files: FileNode[], maxFilesWithContent = 10, maxCharsPerFile = 3000): string {
+  if (files.length === 0) return "No existing workspace files.";
+
+  const lines: string[] = [`Existing workspace files (${files.length} total):`];
+
+  // Prioritise smaller/interface files for full content
+  const sorted = [...files].sort((a, b) => a.content.length - b.content.length);
+  let contentCount = 0;
+
+  for (const f of sorted) {
+    if (contentCount < maxFilesWithContent && f.content.trim()) {
+      const snippet = f.content.length > maxCharsPerFile
+        ? f.content.substring(0, maxCharsPerFile) + `\n... [truncated, ${f.content.length} total chars]`
+        : f.content;
+      lines.push(`\n--- FILE: ${f.path} ---\n${snippet}`);
+      contentCount++;
+    } else {
+      lines.push(`• ${f.path}`);
+    }
+  }
+
+  return lines.join("\n");
+}
+
+/**
+ * Build a conversation history string from recent messages.
+ */
+function buildConversationContext(messages: Message[], maxMessages = 6): string {
+  if (messages.length === 0) return "";
+  const recent = messages.slice(-maxMessages);
+  const lines = recent.map(m => `[${m.role.toUpperCase()}]: ${m.content.substring(0, 500)}`);
+  return `\nRecent conversation history:\n${lines.join("\n")}`;
+}
+
 // 1. Dynamic Task Planner
 export async function planBuildTasks(userPrompt: string, env?: Partial<AppEnv>, attachment?: any): Promise<Task[]> {
   try {
@@ -83,7 +137,9 @@ CRITICAL RULES:
 2. NEVER plan theoretical, conversational, explanatory, or administrative steps (e.g., "Choose tool", "Confirm environment", "Discuss layout", "Open terminal", "Wait for feedback").
 3. Keep task and subtask names short, professional, and descriptive.
 4. When folder creation is requested, the task and subtask must directly represent creating that folder (e.g. "Create src/components/MyFolder folder"). Do NOT make it a multi-step theoretical checklist.
-5. Have strong professional context awareness. Avoid generic placeholder names, redundant terms, or conversational phrases.`;
+5. Have strong professional context awareness. Avoid generic placeholder names, redundant terms, or conversational phrases.
+6. Order tasks so dependencies come FIRST. If TaskB imports from TaskA, TaskA must appear earlier.
+7. After code generation tasks, include a "Validate & install dependencies" subtask when new npm packages are needed.`;
 
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash",
@@ -123,6 +179,137 @@ CRITICAL RULES:
       subtasks: [{ id: `${taskId}-sub-0`, taskId, name: `Analyze and write features for: ${userPrompt}`, status: "pending", logs: ["Awaiting run..."] }]
     }];
   }
+}
+
+/**
+ * Detect npm package names from import statements in code and install missing ones.
+ */
+async function installDetectedPackages(code: string, sub: Subtask, task: Task): Promise<void> {
+  try {
+    // Find all import statements
+    const importRegex = /^import\s+.*?\s+from\s+['"]([^'"./][^'"]*)['"]/gm;
+    const requireRegex = /require\(\s*['"]([^'"./][^'"]*)['"]\s*\)/g;
+    const packageNames = new Set<string>();
+
+    let match: RegExpExecArray | null;
+    while ((match = importRegex.exec(code)) !== null) {
+      const pkg = match[1].split("/")[0]; // handle scoped: @org/pkg → @org/pkg
+      if (match[1].startsWith("@")) {
+        packageNames.add(match[1].split("/").slice(0, 2).join("/"));
+      } else {
+        packageNames.add(pkg);
+      }
+    }
+    while ((match = requireRegex.exec(code)) !== null) {
+      packageNames.add(match[1].split("/")[0]);
+    }
+
+    // Built-ins and already-known packages to skip
+    const BUILTIN_OR_KNOWN = new Set([
+      "react", "react-dom", "express", "hono", "vite", "fs", "path", "os", "child_process",
+      "crypto", "http", "https", "url", "stream", "util", "events", "buffer", "dotenv",
+      "@google/genai", "lucide-react", "motion", "tailwindcss", "typescript",
+      "@types/react", "@types/react-dom", "@types/express", "@types/node",
+    ]);
+
+    const toInstall = [...packageNames].filter(p => !BUILTIN_OR_KNOWN.has(p) && p.length > 0);
+
+    if (toInstall.length > 0) {
+      const installCmd = `npm install --save ${toInstall.join(" ")} 2>&1`;
+      sub.logs.push(`[PKG] Detected new dependencies: ${toInstall.join(", ")}. Installing...`);
+      broadcastSSE("subtask_log", { subtaskId: sub.id, log: sub.logs[sub.logs.length - 1] });
+      await saveTask(task);
+
+      const result = await executeTerminalCommand(installCmd, { timeoutMs: 60000 });
+      if (result.success) {
+        sub.logs.push(`[PKG] ✅ Dependencies installed successfully.`);
+      } else {
+        sub.logs.push(`[PKG] ⚠️ Package install warning: ${result.stderr.substring(0, 200)}`);
+      }
+      broadcastSSE("subtask_log", { subtaskId: sub.id, log: sub.logs[sub.logs.length - 1] });
+      await saveTask(task);
+    }
+  } catch (err: any) {
+    sub.logs.push(`[PKG] Package detection skipped: ${err.message}`);
+  }
+}
+
+/**
+ * Run TypeScript type-check on a generated file, logging results into the subtask.
+ */
+async function validateGeneratedFile(filePath: string, sub: Subtask, task: Task): Promise<boolean> {
+  if (!filePath.endsWith(".ts") && !filePath.endsWith(".tsx")) return true;
+  try {
+    const result = await executeTerminalCommand(`npx tsc --noEmit --skipLibCheck 2>&1 | head -30`, { timeoutMs: 30000 });
+    if (result.success) {
+      sub.logs.push(`[VALIDATE] ✅ TypeScript check passed for ${filePath}.`);
+      broadcastSSE("subtask_log", { subtaskId: sub.id, log: sub.logs[sub.logs.length - 1] });
+      await saveTask(task);
+      return true;
+    } else {
+      const errors = (result.stdout || result.stderr).substring(0, 500);
+      sub.logs.push(`[VALIDATE] ⚠️ TypeScript issues detected (will auto-fix on retry): ${errors}`);
+      broadcastSSE("subtask_log", { subtaskId: sub.id, log: sub.logs[sub.logs.length - 1] });
+      await saveTask(task);
+      return false;
+    }
+  } catch (_) {
+    return true; // Don't block on validate errors
+  }
+}
+
+/**
+ * Generate code for a subtask with full context — existing file contents + conversation history.
+ * Returns the generated code string.
+ */
+async function generateSubtaskCode(
+  ai: GoogleGenAI,
+  model: string,
+  prompt: string,
+  subtaskName: string,
+  targetPath: string,
+  currentFiles: FileNode[],
+  conversationHistory: Message[],
+  previousError?: string
+): Promise<string> {
+  const workspaceContext = buildWorkspaceContext(currentFiles);
+  const conversationContext = buildConversationContext(conversationHistory);
+
+  const errorContext = previousError
+    ? `\n\nPREVIOUS ATTEMPT FAILED WITH ERROR — fix this on this attempt:\n${previousError}\n`
+    : "";
+
+  const systemInstruction = `You are an elite, senior software engineer with expert knowledge of TypeScript, React, Node.js, and modern web development. Your task is to write production-grade code.
+
+CRITICAL REQUIREMENTS:
+1. INDENTATION & FORMATTING: Use consistent 2-space indentation. Clean, readable code.
+2. SYNTAX & COMPILATION: All imports must resolve correctly. Fix TypeScript errors, use precise types. No syntax errors.
+3. COMPLETENESS: Write the FULL, executable file content. NO truncation, NO "// ... implement rest", NO placeholder comments.
+4. IMPORTS: Only import packages that exist in package.json or are Node built-ins. Check the workspace context for what's available.
+5. CONSISTENCY: Match the coding style and patterns already used in other workspace files.
+6. RESPONSE FORMAT: Output ONLY the raw code. DO NOT wrap in markdown code blocks. Start from the very first character.${errorContext}`;
+
+  const userContent = `Implement the file "${targetPath}" to fulfill: "${subtaskName}"
+Overall user request: "${prompt}"
+${conversationContext}
+
+${workspaceContext}`;
+
+  const response = await ai.models.generateContent({
+    model,
+    contents: userContent,
+    config: { systemInstruction }
+  });
+
+  let code = response.text || "";
+  // Strip markdown code blocks if present
+  if (code.startsWith("```")) {
+    const lines = code.split("\n");
+    if (lines[0].startsWith("```")) lines.shift();
+    if (lines[lines.length - 1].startsWith("```")) lines.pop();
+    code = lines.join("\n");
+  }
+  return code;
 }
 
 // 2. Real-World Sequential Execution Loop
@@ -168,18 +355,79 @@ export async function executeAgentBuild(prompt: string, tasks: Task[], env?: Par
         broadcastSSE("subtask_log", { subtaskId: sub.id, log: sub.logs[0] });
         await saveTask(task);
 
+        // Check if this is a terminal/command subtask
+        const isCommandTask = /^(run|execute|install|npm|npx|mkdir|create folder|delete|move|copy)\s/i.test(sub.name.trim()) ||
+          sub.name.toLowerCase().includes("install dependencies") ||
+          sub.name.toLowerCase().includes("validate") ||
+          sub.name.toLowerCase().includes("run tests");
+
+        if (isCommandTask) {
+          try {
+            // Ask Gemini to determine the best command to run
+            const ai = getGeminiClient(env);
+            const currentFiles = await getFiles();
+            const cmdPrompt = `You are a DevOps expert. Determine the best terminal shell command to execute for the task: "${sub.name}" in the context of request: "${prompt}".
+Existing workspace files: [${currentFiles.map(f => f.path).join(", ")}]
+
+Rules:
+- Return a single shell command as a plain string (no markdown, no explanation, no code fences).
+- The command must be safe, non-interactive, and not require user input.
+- Prefer npm/npx commands for JavaScript/TypeScript tasks.
+- If it's a folder creation task, use: mkdir -p <path>
+- If no meaningful command applies, return: echo "No command needed"`;
+
+            const cmdResponse = await ai.models.generateContent({
+              model: "gemini-2.5-flash",
+              contents: cmdPrompt,
+            });
+
+            let command = (cmdResponse.text || "echo 'No command needed'").trim().replace(/^```[\w]*\n?/, "").replace(/\n?```$/, "").trim();
+
+            sub.logs.push(`[CMD] Preparing to execute: ${command}`);
+            broadcastSSE("subtask_log", { subtaskId: sub.id, log: sub.logs[sub.logs.length - 1] });
+
+            const safeCheck = isCommandSafe(command);
+            if (!safeCheck.safe) {
+              sub.logs.push(`[CMD] ⚠️ Command blocked by security policy: ${safeCheck.reason}`);
+            } else {
+              const cmdResult = await executeTerminalCommand(command, { timeoutMs: 60000 });
+              if (cmdResult.success) {
+                sub.logs.push(`[CMD] ✅ Command succeeded: ${cmdResult.stdout.substring(0, 300)}`);
+                actionsTaken.push({ type: 'run_command', pathOrCommand: command, success: true });
+              } else {
+                sub.logs.push(`[CMD] ⚠️ Command output: ${(cmdResult.stderr || cmdResult.stdout).substring(0, 300)}`);
+                actionsTaken.push({ type: 'run_command', pathOrCommand: command, success: false });
+              }
+            }
+
+            broadcastSSE("subtask_log", { subtaskId: sub.id, log: sub.logs[sub.logs.length - 1] });
+            sub.status = "completed";
+            sub.completedAt = new Date().toISOString();
+          } catch (cmdErr: any) {
+            sub.status = "failed";
+            sub.logs.push(`[CMD] Error: ${cmdErr.message}`);
+          }
+
+          task.progress = Math.round(((sIdx + 1) / task.subtasks.length) * 100);
+          await saveTask(task);
+          broadcastSSE("task-update", task);
+          continue;
+        }
+
+        // Normal code generation subtask
         try {
           const ai = getGeminiClient(env);
           const route = routeLLMTask(prompt, sub.name, attachment?.name);
           modelsUsed.add(route.model === "gemini-2.5-pro" ? "Pro" : "Flash");
 
           const currentFiles = await getFiles();
-          const registryMap = currentFiles.map(f => f.path).join(", ");
+          const conversationHistory = await getMessages();
 
-          // Determine paths dynamically using Gemini with professional context awareness!
+          // Determine target file path dynamically
           let targetPath = "";
           let language = "typescript";
           try {
+            const registryMap = currentFiles.map(f => f.path).join(", ");
             const pathPrompt = `You are a Principal Software Engineer.
 Determine the most appropriate file path (including correct folders and extension) and programming language to implement the subtask: "${sub.name}" for the overall request: "${prompt}".
 Existing workspace files: [${registryMap}].
@@ -224,58 +472,107 @@ Return ONLY a valid JSON object starting and ending with braces:
           const folder = path.dirname(targetPath);
           actionsTaken.push({ type: 'create_folder', pathOrCommand: folder, success: true });
 
-          // Call model to generate production-grade code block with strict formatting, error correction, and perfect indentation
+          // Generate code
           let code = "";
+          let generationError: string | undefined;
+
           if (targetPath.endsWith(".gitkeep")) {
             code = "";
           } else {
-            const response = await ai.models.generateContent({
-              model: route.model,
-              contents: `You are an elite, senior software engineer. Write a pure, complete, and production-grade implementation of the file "${targetPath}" to fulfill the subtask: "${sub.name}" under the user request: "${prompt}".
+            const freshFiles = await getFiles();
+            
+            // First attempt
+            try {
+              code = await generateSubtaskCode(
+                ai, route.model, prompt, sub.name, targetPath,
+                freshFiles, conversationHistory
+              );
+            } catch (genErr: any) {
+              generationError = genErr.message;
+              sub.logs.push(`[WARN] First attempt failed: ${genErr.message}. Retrying with Flash model...`);
+              broadcastSSE("subtask_log", { subtaskId: sub.id, log: sub.logs[sub.logs.length - 1] });
 
-Workspace files structure for context: [${registryMap}].
-
-CRITICAL REQUIREMENTS:
-1. INDENTATION & FORMATTING: Follow strict clean-code guidelines. Use consistent 2-space indentation. Maintain beautiful, readable spacing.
-2. SYNTAX & COMPILATION: Ensure all imports are resolved correctly from the workspace structure. Fix any typical typescript errors, make types precise, and avoid using 'any' unless necessary. No syntax errors, unbalanced braces, or missing brackets are tolerated.
-3. COMPLETENESS: Write the full, executable content of the file. DO NOT truncate the code, do not write comments like '// ... implement rest here', and do NOT include mock descriptions.
-4. RESPONSE FORMAT: Output ONLY the raw code content. DO NOT wrap the output in markdown code blocks like \`\`\`typescript or \`\`\`. Start writing the code immediately from the very first character of your response.`
-            });
-
-            code = response.text || "";
-            if (code.startsWith("```")) {
-              const lines = code.split("\n");
-              if (lines[0].startsWith("```")) lines.shift();
-              if (lines[lines.length - 1].startsWith("```")) lines.pop();
-              code = lines.join("\n");
+              // Retry with Flash model
+              try {
+                code = await generateSubtaskCode(
+                  ai, "gemini-2.5-flash", prompt, sub.name, targetPath,
+                  freshFiles, conversationHistory, generationError
+                );
+                generationError = undefined;
+              } catch (retryErr: any) {
+                throw retryErr; // Surface to outer catch
+              }
             }
           }
 
-          const fileNode: FileNode = { path: targetPath, content: code, language: "typescript" };
+          // Save to virtual DB
+          const fileNode: FileNode = { path: targetPath, content: code, language };
           await saveFile(fileNode);
 
-          // WRITE TO PHYSICAL DRIVE
+          // Write to physical disk
           try {
             const dir = path.dirname(targetPath);
             if (!fs.existsSync(dir)) {
               fs.mkdirSync(dir, { recursive: true });
             }
             fs.writeFileSync(targetPath, code, "utf8");
-            sub.logs.push(`[SUCCESS] Wrote file directly to physical workspace drive at: ${targetPath}`);
+            sub.logs.push(`[SUCCESS] Wrote file to workspace: ${targetPath}`);
           } catch (writeErr: any) {
-            sub.logs.push(`[WARN] Failed to write directly to physical drive: ${writeErr.message}`);
+            sub.logs.push(`[WARN] Physical write failed: ${writeErr.message}`);
+          }
+
+          broadcastSSE("file-created", fileNode);
+          actionsTaken.push({ type: 'create_file', pathOrCommand: targetPath, success: true });
+
+          // Install any detected npm packages
+          if (code && !targetPath.endsWith(".gitkeep")) {
+            await installDetectedPackages(code, sub, task);
+          }
+
+          // Validate TypeScript if applicable
+          if (code && !targetPath.endsWith(".gitkeep")) {
+            const isValid = await validateGeneratedFile(targetPath, sub, task);
+
+            // If validation failed, do one more retry with error context
+            if (!isValid) {
+              sub.logs.push(`[RETRY] Re-generating with type error context...`);
+              broadcastSSE("subtask_log", { subtaskId: sub.id, log: sub.logs[sub.logs.length - 1] });
+
+              try {
+                const tscResult = await executeTerminalCommand(`npx tsc --noEmit --skipLibCheck 2>&1 | head -40`, { timeoutMs: 20000 });
+                const errContext = (tscResult.stdout || tscResult.stderr).substring(0, 800);
+                const freshFiles2 = await getFiles();
+                const fixedCode = await generateSubtaskCode(
+                  ai, route.model, prompt, sub.name, targetPath,
+                  freshFiles2, conversationHistory, errContext
+                );
+
+                if (fixedCode && fixedCode !== code) {
+                  const fixedNode: FileNode = { path: targetPath, content: fixedCode, language };
+                  await saveFile(fixedNode);
+                  try {
+                    fs.writeFileSync(targetPath, fixedCode, "utf8");
+                    sub.logs.push(`[RETRY] ✅ Auto-fixed and re-wrote: ${targetPath}`);
+                  } catch (_) {}
+                  broadcastSSE("file-created", fixedNode);
+                }
+              } catch (retryErr: any) {
+                sub.logs.push(`[RETRY] Auto-fix attempt skipped: ${retryErr.message}`);
+              }
+            }
           }
           
           sub.file = targetPath;
           sub.code = code;
           sub.status = "completed";
           sub.completedAt = new Date().toISOString();
-          sub.logs.push(`[SUCCESS] Compiled and wrote payload to: ${targetPath}`);
-          broadcastSSE("file-created", fileNode);
-          actionsTaken.push({ type: 'create_file', pathOrCommand: targetPath, success: true });
+          sub.logs.push(`[DONE] ✅ Compiled and wrote: ${targetPath}`);
+          broadcastSSE("subtask_log", { subtaskId: sub.id, log: sub.logs[sub.logs.length - 1] });
+
         } catch (subErr: any) {
           sub.status = "failed";
-          sub.logs.push(`Error: ${subErr.message}`);
+          sub.logs.push(`[ERROR] ${subErr.message}`);
+          broadcastSSE("subtask_log", { subtaskId: sub.id, log: sub.logs[sub.logs.length - 1] });
         }
 
         task.progress = Math.round(((sIdx + 1) / task.subtasks.length) * 100);
@@ -288,20 +585,20 @@ CRITICAL REQUIREMENTS:
       await saveTask(task);
     }
 
-    // Git integration & Completion reports
+    // Git integration & Completion report
     let gitReport = "";
     const config = resolveEnvWithOverrides(env);
     if (config.GITHUB_TOKEN && config.GITHUB_REPO_URL && !activeCancellationSignal.aborted) {
       const currentFiles = await getFiles();
       const push = await executeGitPush(config.GITHUB_TOKEN, config.GITHUB_REPO_URL, "main", currentFiles);
-      gitReport = push.success ? `\n\n🔄 Committed successfully to remote repository.` : `\n\n⚠️ Git sync deferred.`;
+      gitReport = push.success ? `\n\n🔄 Committed successfully to remote repository.` : `\n\n⚠️ Git sync deferred: ${push.message}`;
     }
 
     const totalSec = Math.round((Date.now() - startTime) / 1000);
     const finalMsg: Message = {
       id: `msg-${Date.now()}-done`,
       role: "assistant",
-      content: `### Build Completed Successfully\n\nAll tasks completed.${gitReport}`,
+      content: `### ✅ Build Completed Successfully\n\nAll tasks completed in ${totalSec}s.${gitReport}`,
       timestamp: new Date().toISOString(),
       actionsTaken,
       thoughtTimeSeconds: 1.5,
@@ -310,6 +607,7 @@ CRITICAL REQUIREMENTS:
     };
     await addMessage(finalMsg);
     broadcastSSE("build-finished", finalMsg);
+    broadcastSSE("message-added", finalMsg);
   } catch (err: any) {
     console.error("Error in executeAgentBuild:", err);
     for (const t of tasks) {
@@ -321,11 +619,12 @@ CRITICAL REQUIREMENTS:
     const finalMsg: Message = {
       id: `msg-${Date.now()}-failed`,
       role: "assistant",
-      content: `### Build Failed\n\nAn unexpected error occurred: ${err.message || err}`,
+      content: `### ❌ Build Failed\n\nAn unexpected error occurred: ${err.message || err}`,
       timestamp: new Date().toISOString(),
       durationSeconds: Math.round((Date.now() - startTime) / 1000)
     };
     await addMessage(finalMsg);
     broadcastSSE("build-finished", finalMsg);
+    broadcastSSE("message-added", finalMsg);
   }
 }

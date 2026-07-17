@@ -418,57 +418,62 @@ export default function App() {
     setSavedSessions(sessionsList);
   }, [messages, tasks, files, currentPrompt, activeSessionId]);
 
-  const handleStartFreshChat = async () => {
+  const handleStartFreshChat = () => {
+    // Reset UI immediately — do NOT await server clear (it can hang if a build is running)
     setIsSidebarOpen(false);
     setActiveTab("chat");
-    
-    // Clear state on backend
-    await handleClearSession();
-    
-    // Create new session ID
+
+    // Create new session ID first so auto-save doesn't overwrite the old one
     const newSessionId = "session-" + Date.now();
     setActiveSessionId(newSessionId);
     localStorage.setItem("trinity_active_session_id", newSessionId);
-    
-    // Clear local state
+
+    // Clear local React state
     setMessages([]);
     setTasks([]);
     setFiles([]);
     setCurrentPrompt("");
+    setThinkingState(null);
+
+    // Fire-and-forget server clear so next prompt starts clean on the backend
+    fetch(`${API_BASE}/api/session/clear`, { method: "POST" }).catch(() => {});
+  };
+
+  const handleClearAllHistory = () => {
+    if (!confirm("Delete ALL saved chat sessions? This cannot be undone.")) return;
+    localStorage.removeItem("trinity_saved_sessions");
+    localStorage.removeItem("trinity_active_session_id");
+    setSavedSessions([]);
+    // Also start a fresh chat
+    handleStartFreshChat();
   };
 
   const handleLoadSession = async (session: any) => {
     setIsLoadingSession(true);
+    setIsSidebarOpen(false);
     setActiveSessionId(session.id);
     localStorage.setItem("trinity_active_session_id", session.id);
-    
-    // 1. Sync React States instantly
+
+    // 1. Restore React state instantly from localStorage snapshot
     setMessages(session.messages || []);
     setTasks(session.tasks || []);
     setFiles(session.files || []);
     setCurrentPrompt(session.currentPrompt || "");
+    setThinkingState(null);
+    setActiveTab("chat");
 
-    // 2. Sync to Express Backend
-    try {
-      await fetch(`${API_BASE}/api/session/load`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          messages: session.messages || [],
-          tasks: session.tasks || [],
-          files: session.files || []
-        })
-      });
-    } catch (err) {
-      console.error("Error syncing session load to backend:", err);
-    } finally {
-      setIsLoadingSession(false);
-    }
-
-    // 3. Navigate to preview and trigger the "spin its UI in live preview"
-    setActiveTab("preview");
-    setPreviewReloadKey(prev => prev + 1);
-    setIsSidebarOpen(false);
+    // 2. Sync to backend in the background (so SSE stays in sync for active builds)
+    fetch(`${API_BASE}/api/session/load`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        messages: session.messages || [],
+        tasks: session.tasks || [],
+        files: session.files || []
+      })
+    })
+      .catch(err => console.error("Error syncing session load to backend:", err))
+      .finally(() => setIsLoadingSession(false));
   };
 
   const handleDeleteSession = (sessionId: string, e: React.MouseEvent) => {
@@ -554,31 +559,55 @@ export default function App() {
     return () => clearInterval(pollInterval);
   }, [tasks.some(t => t.status === "running")]);
 
-  const fetchInitialData = async () => {
+  const fetchInitialData = async (opts?: { serverOnly?: boolean }) => {
     try {
-      // 1. Fetch DB Statuses
+      // 1. Always fetch DB status (lightweight)
       const statusRes = await fetch(`${API_BASE}/api/db-status`);
       const statusData = await statusRes.json();
       setDbStatus({ d1: statusData.d1, kv: statusData.kv });
 
-      // 2. Fetch Chat History
-      const msgRes = await fetch(`${API_BASE}/api/messages`);
-      const msgData = await msgRes.json();
-      setMessages(msgData);
+      // 2. If we have a saved session in localStorage for the active session ID,
+      //    prefer that over stale server in-memory data — UNLESS serverOnly is requested
+      //    (e.g. after an SSE "refreshed" event from session/load).
+      if (!opts?.serverOnly) {
+        const savedRaw = localStorage.getItem("trinity_saved_sessions");
+        if (savedRaw) {
+          try {
+            const sessions: any[] = JSON.parse(savedRaw);
+            const activeId = localStorage.getItem("trinity_active_session_id");
+            const match = sessions.find(s => s.id === activeId);
+            if (match && (match.messages?.length > 0 || match.tasks?.length > 0)) {
+              setMessages(match.messages || []);
+              setTasks(match.tasks || []);
+              setFiles(match.files || []);
+              setCurrentPrompt(match.currentPrompt || "");
+              return; // Local data is fresher — skip server fetch
+            }
+          } catch (_) {}
+        }
+      }
 
-      // 3. Fetch Active Tasks
-      const taskRes = await fetch(`${API_BASE}/api/tasks`);
-      const taskData = await taskRes.json();
-      setTasks(taskData);
+      // 3. Fallback: fetch from server (used when no local session or serverOnly=true)
+      const [msgRes, taskRes, fileRes] = await Promise.all([
+        fetch(`${API_BASE}/api/messages`),
+        fetch(`${API_BASE}/api/tasks`),
+        fetch(`${API_BASE}/api/files`),
+      ]);
 
-      // 4. Fetch Synthesized Files
-      const fileRes = await fetch(`${API_BASE}/api/files`);
-      const fileData = await fileRes.json();
-      setFiles(fileData);
-
-      // Extract current prompt if tasks are active
-      if (taskData.length > 0) {
-        setCurrentPrompt(taskData[0].name);
+      if (msgRes.ok) {
+        const msgData = await msgRes.json();
+        if (Array.isArray(msgData)) setMessages(msgData);
+      }
+      if (taskRes.ok) {
+        const taskData = await taskRes.json();
+        if (Array.isArray(taskData)) {
+          setTasks(taskData);
+          if (taskData.length > 0) setCurrentPrompt(taskData[0].name);
+        }
+      }
+      if (fileRes.ok) {
+        const fileData = await fileRes.json();
+        if (Array.isArray(fileData)) setFiles(fileData);
       }
     } catch (err) {
       console.error("Failed to load initial workspace data:", err);
@@ -624,7 +653,8 @@ export default function App() {
       const data = JSON.parse(e.data);
       console.log("SSE Pipeline Handshake:", data);
       if (data && data.status === "refreshed") {
-        fetchInitialData();
+        // This event fires after POST /api/session/load — server data is authoritative here
+        fetchInitialData({ serverOnly: true });
       }
     });
 
@@ -822,11 +852,16 @@ export default function App() {
   };
 
   const handleClearSession = async () => {
-    try {
-      await fetch(`${API_BASE}/api/session/clear`, { method: "POST" });
-    } catch (e) {
+    // Clear local state immediately
+    setMessages([]);
+    setTasks([]);
+    setFiles([]);
+    setCurrentPrompt("");
+    setThinkingState(null);
+    // Then clear server state (fire and forget — don't block UI)
+    fetch(`${API_BASE}/api/session/clear`, { method: "POST" }).catch(e => {
       console.error("Purge error:", e);
-    }
+    });
   };
 
   // Create unified chronology timeline of messages and tasks grouped by logical interaction turns
@@ -1798,12 +1833,25 @@ export default function App() {
 
                 {/* Chat History Section */}
                 <div className="space-y-3">
-                  <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wider font-mono flex items-center justify-between">
-                    <span>Chat History</span>
-                    <span className="text-[10px] bg-gray-150 text-gray-600 px-1.5 py-0.5 rounded-full font-bold font-mono">
-                      {savedSessions.length}
-                    </span>
-                  </h4>
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wider font-mono flex items-center gap-1.5">
+                      <span>Chat History</span>
+                      <span className="text-[10px] bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded-full font-bold font-mono">
+                        {savedSessions.length}
+                      </span>
+                    </h4>
+                    {savedSessions.length > 0 && (
+                      <button
+                        id="btn-clear-all-history"
+                        onClick={handleClearAllHistory}
+                        title="Delete all saved sessions"
+                        className="flex items-center gap-1 text-[10px] font-semibold text-red-400 hover:text-red-600 transition-colors px-2 py-0.5 rounded-lg hover:bg-red-50"
+                      >
+                        <Trash2 className="h-3 w-3" />
+                        Clear All
+                      </button>
+                    )}
+                  </div>
 
                   {savedSessions.length === 0 ? (
                     <div className="p-4 rounded-2xl border border-dashed border-gray-200 text-center text-[11px] text-gray-400 font-sans">
@@ -1897,7 +1945,7 @@ export default function App() {
                     <div className="flex items-center justify-between text-xs font-medium text-gray-600 pb-2 border-b border-gray-100">
                       <span>Core LLM Engine</span>
                       <span className="px-2 py-0.5 rounded font-mono font-bold text-[10px] bg-purple-50 text-purple-700">
-                        Gemini 3.5 Flash
+                        Gemini 2.5 Flash/Pro
                       </span>
                     </div>
                     <div className="flex items-center justify-between text-xs font-medium text-gray-600">

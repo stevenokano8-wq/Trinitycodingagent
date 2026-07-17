@@ -87,19 +87,37 @@ export function broadcastSSE(event: string, data: any) {
 }
 
 export function safeParseJSON(rawText: string): any {
-  const trimmed = rawText.trim();
-  try { return JSON.parse(trimmed); } catch {
-    const firstBrace = trimmed.indexOf('{');
-    const firstBracket = trimmed.indexOf('[');
-    let startIndex = firstBrace !== -1 && (firstBracket === -1 || firstBrace < firstBracket) ? firstBrace : firstBracket;
-    if (startIndex === -1) throw new Error("No JSON structure found.");
-    
-    // Attempt greedy bracket matching extraction
-    const jsonRegex = /(\{[\s\S]*\}|\[[\s\S]*\])/;
-    const match = trimmed.match(jsonRegex);
-    if (match) return JSON.parse(match[0].trim());
-    throw new Error("Failed to parse extracted JSON block");
+  // Strip markdown code fences (```json ... ``` or ``` ... ```) that LLMs often add
+  const stripped = rawText.replace(/```(?:json)?\s*/gi, "").replace(/```\s*/g, "").trim();
+
+  // Fast path: direct parse
+  try { return JSON.parse(stripped); } catch { /* fall through */ }
+
+  // Balanced-bracket extraction: walk character by character so we stop at the
+  // correct closing brace/bracket rather than the last one in the string.
+  const openChar = stripped.indexOf('{') !== -1 ? '{' : '[';
+  const closeChar = openChar === '{' ? '}' : ']';
+  const start = stripped.indexOf(openChar);
+  if (start === -1) throw new Error("No JSON structure found in LLM response.");
+
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+  for (let i = start; i < stripped.length; i++) {
+    const ch = stripped[i];
+    if (escape) { escape = false; continue; }
+    if (ch === '\\' && inString) { escape = true; continue; }
+    if (ch === '"') { inString = !inString; continue; }
+    if (inString) continue;
+    if (ch === openChar) depth++;
+    else if (ch === closeChar) {
+      depth--;
+      if (depth === 0) {
+        return JSON.parse(stripped.slice(start, i + 1));
+      }
+    }
   }
+  throw new Error("Unbalanced JSON structure in LLM response.");
 }
 
 export let activeCancellationSignal = { aborted: false, taskId: "" };
@@ -214,7 +232,8 @@ CRITICAL RULES:
       };
     });
   } catch (err) {
-    // Return direct atomic fallback task on failure
+    // Log the real error so it appears in Cloudflare worker tail logs
+    console.error("[planBuildTasks] planning failed, returning fallback task:", err);
     const taskId = `task-${Date.now()}`;
     return [{
       id: taskId,

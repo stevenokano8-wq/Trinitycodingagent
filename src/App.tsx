@@ -24,7 +24,8 @@ import {
   Clock,
   Loader2,
   Sparkles,
-  X
+  X,
+  Square
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { Message, Task, FileNode, DatabaseStatus } from "./types.js";
@@ -364,8 +365,32 @@ export default function App() {
   const sseTimeoutRef = useRef<any>(null);
 
   // Chat History / Multi-session states
+  // Always open with a fresh session — if the stored session is from a
+  // previous calendar day it's treated as stale and a new one is created.
+  // The old session is still accessible via the sidebar history.
   const [activeSessionId, setActiveSessionId] = useState<string>(() => {
-    return localStorage.getItem("trinity_active_session_id") || "session-" + Date.now();
+    const storedId = localStorage.getItem("trinity_active_session_id");
+    if (storedId) {
+      try {
+        const savedRaw = localStorage.getItem("trinity_saved_sessions");
+        if (savedRaw) {
+          const sessions: any[] = JSON.parse(savedRaw);
+          const match = sessions.find((s: any) => s.id === storedId);
+          if (match?.lastUpdated) {
+            const sessionDay = new Date(match.lastUpdated).toDateString();
+            const today = new Date().toDateString();
+            if (sessionDay === today) {
+              // Same-day refresh — restore the session as-is
+              return storedId;
+            }
+          }
+        }
+      } catch (_) {}
+    }
+    // Different day or no stored session — start fresh
+    const freshId = "session-" + Date.now();
+    localStorage.setItem("trinity_active_session_id", freshId);
+    return freshId;
   });
   const [savedSessions, setSavedSessions] = useState<any[]>([]);
   const [previewReloadKey, setPreviewReloadKey] = useState<number>(0);
@@ -437,6 +462,34 @@ export default function App() {
 
     // Fire-and-forget server clear so next prompt starts clean on the backend
     fetch(`${API_BASE}/api/session/clear`, { method: "POST" }).catch(() => {});
+  };
+
+  // Kill all running tasks immediately — fires cancel-all API then marks tasks
+  // as failed locally so the UI reacts without waiting for the next SSE event.
+  const handleKillAll = async () => {
+    try {
+      await fetch(`${API_BASE}/api/tasks/cancel-all`, { method: "POST" });
+    } catch (err) {
+      console.error("Failed to cancel all tasks:", err);
+    }
+    setThinkingState(null);
+    setIsSending(false);
+    setTasks(prev =>
+      prev.map(t =>
+        t.status === "running"
+          ? {
+              ...t,
+              status: "failed" as const,
+              completedAt: new Date().toISOString(),
+              subtasks: t.subtasks.map(s =>
+                s.status === "running"
+                  ? { ...s, status: "failed" as const, logs: [...s.logs, "⛔ Cancelled by user."] }
+                  : s
+              ),
+            }
+          : t
+      )
+    );
   };
 
   const handleClearAllHistory = () => {
@@ -575,14 +628,27 @@ export default function App() {
           try {
             const sessions: any[] = JSON.parse(savedRaw);
             const activeId = localStorage.getItem("trinity_active_session_id");
-            const match = sessions.find(s => s.id === activeId);
+            const match = sessions.find((s: any) => s.id === activeId);
+            const today = new Date().toDateString();
             if (match && (match.messages?.length > 0 || match.tasks?.length > 0)) {
-              setMessages(match.messages || []);
-              setTasks(match.tasks || []);
-              setFiles(match.files || []);
-              setCurrentPrompt(match.currentPrompt || "");
-              return; // Local data is fresher — skip server fetch
+              // Only restore if the session is from today — stale sessions from
+              // previous days are skipped so the user always starts clean.
+              const sessionDay = match.lastUpdated
+                ? new Date(match.lastUpdated).toDateString()
+                : null;
+              if (sessionDay === today) {
+                setMessages(match.messages || []);
+                setTasks(match.tasks || []);
+                setFiles(match.files || []);
+                setCurrentPrompt(match.currentPrompt || "");
+                return; // Local data is fresher — skip server fetch
+              }
             }
+            // Either no match (fresh session ID generated on new day) or session is
+            // from a different day. Clear server-side D1/KV so we don't restore
+            // yesterday's messages and tasks from the fallback server fetch below.
+            fetch(`${API_BASE}/api/session/clear`, { method: "POST" }).catch(() => {});
+            return; // Don't fetch stale server data — start blank
           } catch (_) {}
         }
       }
@@ -1266,6 +1332,16 @@ export default function App() {
                         }}
                       />
 
+                      {tasks.some(t => t.status === "running") && (
+                        <button
+                          type="button"
+                          onClick={handleKillAll}
+                          title="Stop all running tasks"
+                          className="p-3 bg-rose-600 text-white hover:bg-rose-700 active:scale-95 rounded-full transition-all select-none shrink-0 mb-0.5 flex items-center gap-1.5 animate-pulse shadow-md shadow-rose-200"
+                        >
+                          <Square className="h-4 w-4 text-white fill-white" />
+                        </button>
+                      )}
                       <button
                         id="btn-input-submit"
                         type="submit"
@@ -1575,6 +1651,16 @@ export default function App() {
                           }
                         }}
                       />
+                      {tasks.some(t => t.status === "running") && (
+                        <button
+                          type="button"
+                          onClick={handleKillAll}
+                          title="Stop all running tasks"
+                          className="p-3 bg-rose-600 text-white hover:bg-rose-700 active:scale-95 rounded-full transition-all select-none shrink-0 mb-0.5 flex items-center gap-1.5 animate-pulse shadow-md shadow-rose-200"
+                        >
+                          <Square className="h-4 w-4 text-white fill-white" />
+                        </button>
+                      )}
                       <button
                         id="btn-input-submit"
                         type="submit"

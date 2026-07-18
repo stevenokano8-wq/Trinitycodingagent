@@ -239,6 +239,17 @@ app.post("/api/tasks/cancel", async (c) => {
   }
 });
 
+// Kill all running tasks — no taskId required. Flips the global cancellation
+// signal so the currently executing subtask loop breaks on its next check.
+app.post("/api/tasks/cancel-all", async (c) => {
+  try {
+    cancelActiveBuild("__all__");
+    return c.json({ status: "success", message: "All active task sequences halted." });
+  } catch (err: any) {
+    return c.json({ error: err.message }, 500);
+  }
+});
+
 app.get("/api/files", async (c) => {
   await ensureInit(c.env);
   try {

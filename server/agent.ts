@@ -11,10 +11,10 @@ import path from "path";
 let aiClient: GoogleGenAI | null = null;
 let aiClientKey: string | null = null;
 
-export function getGeminiClient(env?: Partial<AppEnv>): GoogleGenAI {
+export function getGeminiClient(env?: Partial<AppEnv>): GoogleGenAI | null {
   const key = resolveEnvWithOverrides(env).GEMINI_API_KEY;
   if (!key) {
-    throw new Error("GEMINI_API_KEY is required. Please set it in Settings.");
+    return null;
   }
   if (!aiClient || aiClientKey !== key) {
     aiClient = new GoogleGenAI({
@@ -70,6 +70,9 @@ async function runPlanningPrompt(
 
   // Fallback: Gemini Flash (used in local `pnpm dev` without a KV/D1/AI binding)
   const ai = getGeminiClient(env);
+  if (!ai) {
+    throw new Error("No AI inference binding (Cloudflare AI or Gemini client) was initialized. Set GEMINI_API_KEY or bind Cloudflare AI.");
+  }
   const response = await ai.models.generateContent({
     model: "gemini-2.5-flash",
     contents: userContent,
@@ -481,6 +484,9 @@ export async function executeAgentBuild(prompt: string, tasks: Task[], env?: Par
               modelsUsed.add("CF-AI");
             } else {
               const ai = getGeminiClient(env);
+              if (!ai) {
+                throw new Error("Cloudflare AI binding or GEMINI_API_KEY is required.");
+              }
               const cmdResponse = await ai.models.generateContent({
                 model: "gemini-2.5-flash",
                 contents: `${cmdSystemPrompt}\n\n${cmdUserContent}`,

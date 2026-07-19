@@ -1,0 +1,19 @@
+name = "sovereign-agent"
+main = "server/frontend-noop.ts"
+compatibility_date = "2026-07-11"
+compatibility_flags = ["nodejs_compat"]
+
+# Frontend worker: serves the Vite production build (dist/) as static assets.
+# `not_found_handling = "single-page-application"` makes client-side routes
+# (e.g. deep links to /settings) fall back to index.html instead of 404ing.
+[assets]
+directory = "./dist"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+run_worker_first = false
+
+# Custom domain for the production frontend. Cloudflare issues/manages the
+# certificate automatically once the zone (trinityuniverse.org) is active.
+[[routes]]
+pattern = "agent.trinityuniverse.org"
+custom_domain = true

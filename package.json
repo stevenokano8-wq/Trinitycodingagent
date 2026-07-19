@@ -16,6 +16,7 @@
   "dependencies": {
     "@cloudflare/agents": "^0.0.16",
     "@cloudflare/sandbox": "^0.12.3",
+    "@cloudflare/think": "^0.13.0",
     "@google/genai": "^2.4.0",
     "@tailwindcss/vite": "^4.1.14",
     "@vitejs/plugin-react": "^5.0.4",

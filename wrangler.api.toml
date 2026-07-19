@@ -1,5 +1,5 @@
 name = "sovereign-agent-api"
-main = "server/worker.ts"
+main = "src/index.ts"
 compatibility_date = "2026-07-11"
 compatibility_flags = ["nodejs_compat"]
 

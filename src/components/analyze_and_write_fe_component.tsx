@@ -1,5 +1,3 @@
-// src/components/analyze_and_write_fe_component.tsx
-
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
@@ -9,7 +7,7 @@ interface Folder {
 }
 
 const AnalyzeAndWriteFEComponent: React.FC = () => {
-  const [folderName, setFolderName] = useState('');
+  const [folderName, setFolderName] = useState('src/utils');
   const [folderCreated, setFolderCreated] = useState(false);
   const navigate = useNavigate();
 

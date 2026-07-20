@@ -402,8 +402,17 @@ app.post("/api/build", async (c) => {
   await addMessage(userMsg);
   broadcastSSE("message-added", userMsg);
 
-  executeAgentBuild(prompt, [], c.env, attachment).catch(console.error);
-  return c.json({ status: "started", messageId: userMsg.id });
+  // Plan tasks first so the agent has a structured blueprint to execute
+  const plannedTasks = await planBuildTasks(prompt, c.env, attachment).catch(() => [] as Task[]);
+  for (const task of plannedTasks) await saveTask(task);
+
+  const buildPromise = executeAgentBuild(prompt, plannedTasks, c.env, attachment);
+  if (c.executionCtx && typeof c.executionCtx.waitUntil === "function") {
+    c.executionCtx.waitUntil(buildPromise);
+  } else {
+    buildPromise.catch(console.error);
+  }
+  return c.json({ status: "started", messageId: userMsg.id, tasks: plannedTasks });
 });
 
 app.post("/api/build/cancel", async (c) => {
@@ -544,7 +553,10 @@ async function handleQueueMessage(msg: QueueMessage, env: AppEnv): Promise<void>
       const prompt = (msg.payload.prompt as string) ?? "";
       if (prompt) {
         await ensureInit(env);
-        await executeAgentBuild(prompt, [], env, msg.payload.attachment as any);
+        const attachment = msg.payload.attachment as any;
+        const plannedTasks = await planBuildTasks(prompt, env, attachment).catch(() => [] as Task[]);
+        for (const task of plannedTasks) await saveTask(task);
+        await executeAgentBuild(prompt, plannedTasks, env, attachment);
       }
       break;
     }

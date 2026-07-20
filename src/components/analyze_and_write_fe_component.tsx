@@ -1,76 +1,55 @@
 // src/components/analyze_and_write_fe_component.tsx
 
 import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import axios from 'axios';
 
-interface Template {
+interface Folder {
   name: string;
-  description: string;
 }
-
-interface Project {
-  name: string;
-  template: Template;
-}
-
-const templates: Template[] = [
-  { name: 'React', description: 'A React project template' },
-  { name: 'Node.js', description: 'A Node.js project template' },
-];
 
 const AnalyzeAndWriteFEComponent: React.FC = () => {
-  const [projectName, setProjectName] = useState('');
-  const [selectedTemplate, setSelectedTemplate] = useState<Template | null>(null);
-  const [project, setProject] = useState<Project | null>(null);
+  const [folderName, setFolderName] = useState('');
+  const [folderCreated, setFolderCreated] = useState(false);
+  const navigate = useNavigate();
 
-  const handleProjectNameChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    setProjectName(event.target.value);
+  const handleFolderNameChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    setFolderName(event.target.value);
   };
 
-  const handleTemplateSelect = (template: Template) => {
-    setSelectedTemplate(template);
-  };
-
-  const handleCreateProject = () => {
-    if (projectName && selectedTemplate) {
-      const newProject: Project = {
-        name: projectName,
-        template: selectedTemplate,
-      };
-      setProject(newProject);
+  const handleCreateFolder = async () => {
+    try {
+      const response = await axios.post('/api/create-folder', {
+        name: folderName,
+      });
+      if (response.status === 201) {
+        setFolderCreated(true);
+        navigate('/folders');
+      } else {
+        console.error('Failed to create folder');
+      }
+    } catch (error) {
+      console.error('Error creating folder:', error);
     }
   };
 
   return (
     <div>
-      <h1>Analyze and Write Features for TypeScript CLI Tool</h1>
+      <h1>Analyze and Write Features for Create Folder</h1>
       <p>
-        This tool scaffolds new projects, supports multiple templates, and has
-        interactive prompts.
+        This tool creates a new folder with the given name.
       </p>
       <input
         type="text"
-        value={projectName}
-        onChange={handleProjectNameChange}
-        placeholder="Enter project name"
+        value={folderName}
+        onChange={handleFolderNameChange}
+        placeholder="Enter folder name"
       />
-      <ul>
-        {templates.map((template) => (
-          <li key={template.name}>
-            <input
-              type="radio"
-              checked={selectedTemplate === template}
-              onChange={() => handleTemplateSelect(template)}
-            />
-            {template.name} - {template.description}
-          </li>
-        ))}
-      </ul>
-      <button onClick={handleCreateProject}>Create Project</button>
-      {project && (
+      <button onClick={handleCreateFolder}>Create Folder</button>
+      {folderCreated && (
         <div>
-          <h2>Project Created</h2>
-          <p>Project Name: {project.name}</p>
-          <p>Template: {project.template.name}</p>
+          <h2>Folder Created</h2>
+          <p>Folder Name: {folderName}</p>
         </div>
       )}
     </div>

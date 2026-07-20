@@ -193,5 +193,13 @@ export function setRuntimeOverrides(overrides: Partial<AppEnv>) {
   _runtimeOverrides = overrides;
 }
 export function resolveEnvWithOverrides(env?: Partial<AppEnv>): Partial<AppEnv> {
-  return { ...env, ..._runtimeOverrides };
+  const nodeEnv: Partial<AppEnv> = {};
+  if (typeof process !== "undefined" && process.env) {
+    if (process.env.GEMINI_API_KEY) nodeEnv.GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+    if (process.env.GITHUB_TOKEN) nodeEnv.GITHUB_TOKEN = process.env.GITHUB_TOKEN;
+    if (process.env.GITHUB_REPO_URL) nodeEnv.GITHUB_REPO_URL = process.env.GITHUB_REPO_URL;
+    if (process.env.UPSTASH_REDIS_REST_URL) nodeEnv.UPSTASH_REDIS_REST_URL = process.env.UPSTASH_REDIS_REST_URL;
+    if (process.env.UPSTASH_REDIS_REST_TOKEN) nodeEnv.UPSTASH_REDIS_REST_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN;
+  }
+  return { ...nodeEnv, ...env, ..._runtimeOverrides };
 }

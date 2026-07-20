@@ -85,9 +85,16 @@ export const sseClients = new Set<any>();
 
 export function broadcastSSE(event: string, data: any) {
   const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+  const encoder = new TextEncoder();
+  const encoded = encoder.encode(payload);
   for (const client of sseClients) {
     try {
-      client.write(payload);
+      const res = client.write(encoded);
+      if (res && typeof res.catch === "function") {
+        res.catch(() => {
+          sseClients.delete(client);
+        });
+      }
     } catch (err) {
       sseClients.delete(client);
     }

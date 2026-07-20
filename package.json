@@ -1,47 +1,24 @@
 {
-  "name": "trinitycodingagent",
+  "name": "simple-animated-gradient-background",
   "version": "1.0.0",
-  "description": "Trinity Sovereign Coding Agent — Cloudflare Workers + React/Vite",
+  "description": "A simple animated gradient background using React and Vite",
   "main": "index.html",
   "scripts": {
-    "dev": "tsx server.ts",
-    "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
-    "start": "node dist/server.cjs",
-    "lint": "tsc --noEmit",
-    "deploy:api": "wrangler deploy --config wrangler.api.toml",
-    "deploy:frontend": "wrangler deploy --config wrangler.toml",
-    "deploy": "npm run build && npm run deploy:api && npm run deploy:frontend"
+    "dev": "vite",
+    "build": "vite build",
+    "serve": "vite serve"
   },
   "keywords": [],
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "@cloudflare/agents": "^0.0.16",
-    "@cloudflare/sandbox": "^0.12.3",
-    "@cloudflare/think": "^0.13.0",
-    "@google/genai": "^2.4.0",
-    "@tailwindcss/vite": "^4.1.14",
-    "@upstash/redis": "^1.34.3",
-    "@vitejs/plugin-react": "^5.0.4",
-    "dotenv": "^17.2.3",
-    "express": "^4.21.2",
-    "hono": "^4.6.14",
-    "lucide-react": "^0.546.0",
-    "motion": "^12.23.24",
-    "react": "^19.0.1",
-    "react-dom": "^19.0.1",
-    "vite": "^6.2.3"
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
   },
   "devDependencies": {
-    "@types/express": "^4.17.21",
-    "@types/node": "^22.14.0",
-    "@types/react": "^19.0.1",
-    "@types/react-dom": "^19.0.1",
-    "autoprefixer": "^10.4.21",
-    "esbuild": "^0.25.0",
-    "tailwindcss": "^4.1.14",
-    "tsx": "^4.21.0",
-    "typescript": "~5.8.2",
-    "wrangler": "^4.42.0"
+    "@vitejs/plugin-react": "^2.1.0",
+    "autoprefixer": "^10.4.13",
+    "tailwindcss": "^3.2.4",
+    "vite": "^3.2.3"
   }
 }

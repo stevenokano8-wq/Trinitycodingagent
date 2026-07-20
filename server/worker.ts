@@ -100,6 +100,15 @@ app.post("/api/session", async (c) => {
   return c.json({ sessionId, workspaceName: workspaceName ?? `workspace-${sessionId.slice(0, 8)}` });
 });
 
+
+// ── Session clear (wipes messages + tasks + files for a fresh start) ─────────
+app.post("/api/session/clear", async (c) => {
+  await ensureInit(c.env);
+  await Promise.all([clearMessages(), deleteTasks(), clearFiles()]);
+  broadcastSSE("session-cleared", { ts: new Date().toISOString() });
+  return c.json({ success: true });
+});
+
 app.get("/api/sessions", async (c) => {
   if (!c.env.WORKSPACE_REGISTRY) return c.json([]);
   const regId = c.env.WORKSPACE_REGISTRY.idFromName("global");

@@ -228,6 +228,15 @@ const INSTANT_COMMAND_PATTERNS: Array<{ test: RegExp; cmd: (m: RegExpMatchArray)
   { test: /\b(?:create|add|make)\s+([a-zA-Z0-9_./-]+)\s+(?:folder|directory|dir)\b/i, cmd: (m) => `mkdir -p ${m[1].replace(/^\//, "")}` },
   // plain "mkdir src/utils" at start of prompt
   { test: /^mkdir\s+(-p\s+)?([a-zA-Z0-9_./-]+)/i, cmd: (m) => `mkdir -p ${(m[2] || m[1]).replace(/^\//, "")}` },
+  // "touch file.ts" or "create file foo.ts"
+  { test: /^(?:touch|new file|create file)s+([a-zA-Z0-9_./-]+)/i, cmd: (m) => `touch ${m[1]}` },
+  // "delete file foo.ts" / "remove file"
+  { test: /^(?:delete|remove|rm)s+(?:files+)?([a-zA-Z0-9_./-]+)/i, cmd: (m) => `rm -f ${m[1]}` },
+  // "run npm install" / "install dependencies"
+  { test: /^(?:runs+)?npms+installs*$/i, cmd: () => 'npm install' },
+  { test: /^installs+(?:alls+)?dep(?:endencies)?/i, cmd: () => 'npm install' },
+  // "git status" / "git log"
+  { test: /^gits+(status|log|diff|pull|fetch)(?:s|$)/i, cmd: (m) => `git ${m[1]}` },
 ];
 
 /** Returns a ready-made task list for simple commands without any AI call (<1 ms). */

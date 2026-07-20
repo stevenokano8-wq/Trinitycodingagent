@@ -403,10 +403,10 @@ export default function TaskAccordion({
   isLocked = false, 
   taskIndex = 1 
 }: TaskAccordionProps) {
-  const [isExpanded, setIsExpanded] = useState(isInitiallyExpanded || task.status === "running");
+  const [isExpanded, setIsExpanded] = useState(isInitiallyExpanded || task.status === "running" || task.status === "pending");
 
   useEffect(() => {
-    if (task.status === "running" || task.status === "failed") {
+    if (task.status === "running" || task.status === "failed" || task.status === "pending") {
       setIsExpanded(true);
     }
   }, [task.status]);

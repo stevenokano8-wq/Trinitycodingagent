@@ -1,17 +1,22 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@300;400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&family=Fira+Code:wght@400;500&display=swap');
-@import "tailwindcss";
-
-@theme {
-  --font-sans: "Inter", "Outfit", ui-sans-serif, system-ui, sans-serif;
-  --font-display: "Space Grotesk", "Outfit", sans-serif;
-  --font-mono: "Fira Code", ui-monospace, monospace;
-}
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 
 body {
-  font-family: var(--font-sans);
-  background-color: #fafafa;
-  color: #171717;
+  @apply bg-gradient-to-r from-purple-500 to-pink-500;
+  animation: gradient 10s ease infinite;
+  height: 100vh;
   margin: 0;
-  padding: 0;
-  min-height: 100vh;
+}
+
+@keyframes gradient {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
 }

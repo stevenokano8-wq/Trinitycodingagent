@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from "react";
-import { Play, RefreshCw, Smartphone, Monitor, ShieldAlert, ArrowLeft, ArrowRight, FolderOpen, Database, Sparkles, Terminal, CheckCircle2, Loader2, Activity, Cpu, Layers } from "lucide-react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
+import { Play, RefreshCw, Smartphone, Monitor, ShieldAlert, ArrowLeft, ArrowRight, FolderOpen, Database, Sparkles, Terminal, CheckCircle2, Loader2, Activity, Cpu, Layers, ExternalLink, Code2, Eye } from "lucide-react";
 
 interface PreviewViewProps {
   currentPrompt: string;
@@ -137,12 +137,13 @@ export default function PreviewView({
             <AgentWorkingPortal activeTask={activeTask} />
           ) : fileCount > 0 ? (
             /* SOVEREIGN DYNAMIC COMPILER - Live rendering of generated source code */
-            <DynamicSovereignWorkspace 
-              files={files} 
-              currentPrompt={currentPrompt} 
+            <LiveIframePreview
+              files={files}
+              currentPrompt={currentPrompt}
               detectedFramework={detectedFramework}
               frameworkIcon={frameworkIcon}
               description={description}
+              reloadKey={previewReloadKey}
             />
           ) : isTodoPrompt ? (
             <TodoSimulator />
@@ -159,8 +160,255 @@ export default function PreviewView({
   );
 }
 
+// ---------------------------------------------------------------------------
+// Live preview HTML builder — turns generated files into a renderable blob URL
+// ---------------------------------------------------------------------------
+function buildLivePreviewHTML(files: { path: string; content: string; language: string }[]): string {
+  // 1. Pure HTML entry point → render directly (inject Tailwind CDN if missing)
+  const htmlEntry = files.find(f =>
+    f.path === "index.html" || f.path.endsWith("/index.html")
+  );
+  if (htmlEntry?.content) {
+    let html = htmlEntry.content;
+    if (!html.includes("tailwind")) {
+      html = html.replace("</head>", '<script src="https://cdn.tailwindcss.com"></script>\n</head>');
+    }
+    return html;
+  }
+
+  // 2. React/TSX/JSX component → Babel standalone wrapper
+  const componentFile =
+    files.find(f => f.path === "src/App.tsx" || f.path === "App.tsx" || f.path === "src/App.jsx") ||
+    files.find(f => f.path.endsWith(".tsx") && !f.path.includes("main") && !f.path.includes("config")) ||
+    files.find(f => f.path.endsWith(".jsx")) ||
+    files.find(f => f.path.endsWith(".ts") && !f.path.includes("config") && !f.path.includes("vite")) ||
+    files.find(f => f.path.endsWith(".js") && !f.path.includes("config"));
+
+  if (!componentFile) {
+    return `<!DOCTYPE html><html><body style="font-family:system-ui;padding:20px;color:#666;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#f9fafb"><p>No renderable files found yet. The agent is still building...</p></body></html>`;
+  }
+
+  const cssFiles = files.filter(f => f.path.endsWith(".css"));
+  const cssContent = cssFiles.map(f => f.content).join("\n");
+
+  // Detect export default name so we can mount it
+  const rawCode = componentFile.content;
+  const defaultExportMatch =
+    rawCode.match(/export\s+default\s+function\s+(\w+)/) ||
+    rawCode.match(/export\s+default\s+class\s+(\w+)/) ||
+    rawCode.match(/export\s+default\s+(\w+)\s*;?\s*$/m);
+  const defaultExportName = defaultExportMatch?.[1] ?? "App";
+
+  // Strip imports so Babel doesn't fail on unresolvable modules
+  let code = rawCode
+    .replace(/^import\s+type\s+[^\n]+\n?/gm, "")
+    .replace(/^import\s+['"][^'"]+['"]\s*;?\n?/gm, "")
+    .replace(/^import\s+\{[^}]*\}\s+from\s+['"]react['"]\s*;?\n?/gm, "")
+    .replace(/^import\s+React[,\s][^\n]+\n?/gm, "")
+    .replace(/^import\s+ReactDOM[^\n]+\n?/gm, "")
+    .replace(/^import\s+[^\n]+from\s+['"]lucide-react['"]\s*;?\n?/gm, "")
+    .replace(/^import\s+[^\n]+from\s+['"][./][^'"]+['"]\s*;?\n?/gm, "")
+    .replace(/^import\s+[^\n]+from\s+['"][^'"]+['"]\s*;?\n?/gm, "")
+    .replace(/^export\s+default\s+/gm, "")
+    .replace(/^export\s+\{[^}]+\}\s*;?\s*$/gm, "")
+    .replace(/^export\s+/gm, "");
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Live Preview</title>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    *{box-sizing:border-box}
+    body{margin:0;font-family:system-ui,-apple-system,sans-serif}
+    ${cssContent.replace(/@tailwind[^;]+;/g, "")}
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel" data-presets="react,typescript">
+    /* === auto-provided globals === */
+    const {
+      useState, useEffect, useRef, useCallback, useMemo,
+      useContext, createContext, useReducer, Fragment,
+      forwardRef, memo, createRef
+    } = React;
+    /* stub icon libraries so they don't crash */
+    const _Icon = ({size=16,className="",...p}) =>
+      React.createElement("span",{className,style:{display:"inline-block",width:size,height:size,background:"currentColor",WebkitMask:"url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='12' cy='12' r='8'/%3E%3C/svg%3E\") center/contain",borderRadius:"50%",...p.style}});
+    /* === generated component code === */
+    ${code}
+    /* === mount === */
+    ;(function(){
+      try{
+        const C = typeof ${defaultExportName}!=="undefined" ? ${defaultExportName} : (() => React.createElement("div",{style:{padding:20,color:"#888"}},"Component loaded (no export named ${defaultExportName} found)"));
+        ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(C));
+      }catch(e){
+        document.getElementById("root").innerHTML=
+          "<div style='padding:24px;font-family:monospace;background:#fef2f2;color:#dc2626;border-radius:12px;margin:20px'><strong>Preview Error:</strong><br>"+e.message+"</div>";
+      }
+    })();
+  </script>
+</body>
+</html>`;
+}
+
 /* =========================================================================
-   SOVEREIGN DYNAMIC INTERACTIVE COMPILER / INTERPRETER (Auto-detect & Live)
+   LIVE IFRAME PREVIEW — renders actual generated code in a sandboxed iframe
+   ========================================================================= */
+
+function LiveIframePreview({
+  files,
+  detectedFramework,
+  frameworkIcon,
+  description,
+  reloadKey,
+}: {
+  files: any[];
+  currentPrompt: string;
+  detectedFramework: string;
+  frameworkIcon: string;
+  description: string;
+  reloadKey: number;
+}) {
+  const [selectedFilePath, setSelectedFilePath] = useState<string>("");
+  const [blobUrl, setBlobUrl] = useState<string>("");
+  const [isBuilding, setIsBuilding] = useState(false);
+  const [viewMode, setViewMode] = useState<"preview" | "source">("preview");
+  const prevBlobRef = useRef<string>("");
+
+  // Auto-select entry file
+  useEffect(() => {
+    const htmlFile = files.find(f => f.path === "index.html" || f.path.endsWith("/index.html"));
+    const appFile = files.find(f => f.path === "src/App.tsx" || f.path === "App.tsx");
+    const tsxFile = files.find(f => f.path.endsWith(".tsx") && !f.path.includes("main"));
+    const entry = htmlFile || appFile || tsxFile || files[files.length - 1];
+    if (entry) setSelectedFilePath(entry.path);
+  }, [files.length]);
+
+  // Rebuild preview whenever files change or reload key bumps
+  const spinUpPreview = useCallback(() => {
+    if (files.length === 0) return;
+    setIsBuilding(true);
+    // Allow re-render to show spinner, then build
+    setTimeout(() => {
+      try {
+        const html = buildLivePreviewHTML(files);
+        const blob = new Blob([html], { type: "text/html" });
+        const url = URL.createObjectURL(blob);
+        if (prevBlobRef.current) URL.revokeObjectURL(prevBlobRef.current);
+        prevBlobRef.current = url;
+        setBlobUrl(url);
+      } catch (e: any) {
+        console.error("[LivePreview] Build error:", e);
+      } finally {
+        setIsBuilding(false);
+      }
+    }, 50);
+  }, [files]);
+
+  useEffect(() => {
+    spinUpPreview();
+    return () => { if (prevBlobRef.current) URL.revokeObjectURL(prevBlobRef.current); };
+  }, [reloadKey, files.length]);
+
+  const selectedFile = files.find(f => f.path === selectedFilePath) || files[files.length - 1];
+
+  return (
+    <div className="flex-1 flex flex-col bg-stone-50 overflow-hidden h-full">
+      {/* Toolbar */}
+      <div className="bg-stone-900 text-stone-100 px-4 py-3 border-b border-stone-800 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+        <div className="flex items-center gap-3">
+          <span className="text-lg">{frameworkIcon}</span>
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-stone-400">Framework:</span>
+              <span className="text-[10px] bg-stone-800 border border-stone-700 text-amber-400 font-bold px-2 py-0.5 rounded-full font-mono">
+                {detectedFramework}
+              </span>
+            </div>
+            <p className="text-[9px] text-stone-500 mt-0.5 font-sans">{description}</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          <div className="flex bg-stone-800 rounded-lg p-0.5 gap-0.5 border border-stone-700">
+            <button
+              onClick={() => setViewMode("preview")}
+              className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-[10px] font-bold transition-colors ${viewMode === "preview" ? "bg-stone-900 text-white" : "text-stone-400 hover:text-stone-200"}`}
+            >
+              <Eye className="h-3 w-3" /> Preview
+            </button>
+            <button
+              onClick={() => setViewMode("source")}
+              className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-[10px] font-bold transition-colors ${viewMode === "source" ? "bg-stone-900 text-white" : "text-stone-400 hover:text-stone-200"}`}
+            >
+              <Code2 className="h-3 w-3" /> Source
+            </button>
+          </div>
+          <select
+            value={selectedFilePath}
+            onChange={e => setSelectedFilePath(e.target.value)}
+            className="bg-stone-800 text-stone-200 text-[10px] rounded-lg px-2 py-1.5 border border-stone-700 outline-none focus:ring-1 focus:ring-amber-500 font-mono max-w-[140px]"
+          >
+            {files.map(f => (
+              <option key={f.path} value={f.path}>{f.path.split("/").pop()}</option>
+            ))}
+          </select>
+          <button
+            onClick={spinUpPreview}
+            className="flex items-center gap-1 bg-amber-500 hover:bg-amber-400 text-black px-3 py-1.5 rounded-lg text-[10px] font-bold transition-colors"
+          >
+            {isBuilding ? <Loader2 className="h-3 w-3 animate-spin" /> : <Play className="h-3 w-3" />}
+            {isBuilding ? "Building..." : "Spin Up"}
+          </button>
+        </div>
+      </div>
+
+      {/* Preview / Source split */}
+      <div className="flex-1 overflow-hidden flex flex-col">
+        {viewMode === "source" ? (
+          <div className="flex-1 overflow-auto bg-stone-950 p-4">
+            <pre className="text-[10px] font-mono text-stone-300 leading-relaxed whitespace-pre-wrap">
+              {selectedFile?.content || "// No file selected"}
+            </pre>
+          </div>
+        ) : blobUrl ? (
+          <iframe
+            src={blobUrl}
+            className="flex-1 w-full border-none"
+            title="Live Preview"
+            sandbox="allow-scripts allow-same-origin"
+          />
+        ) : (
+          <div className="flex-1 flex flex-col items-center justify-center text-center p-8 bg-stone-950">
+            {isBuilding ? (
+              <>
+                <Loader2 className="h-8 w-8 text-amber-400 animate-spin mb-3" />
+                <p className="text-xs font-mono text-stone-400">Building preview...</p>
+              </>
+            ) : (
+              <>
+                <Play className="h-8 w-8 text-stone-600 mb-3" />
+                <p className="text-xs font-mono text-stone-500 mb-4">Click <strong className="text-amber-400">Spin Up</strong> to render your files</p>
+                <button onClick={spinUpPreview} className="bg-amber-500 hover:bg-amber-400 text-black px-4 py-2 rounded-xl text-xs font-bold transition-colors">
+                  Spin Up Preview
+                </button>
+              </>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* =========================================================================
+   SOVEREIGN DYNAMIC INTERACTIVE COMPILER / INTERPRETER (kept for fallback)
    ========================================================================= */
 
 function DynamicSovereignWorkspace({ 

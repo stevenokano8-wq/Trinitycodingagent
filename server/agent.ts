@@ -212,8 +212,17 @@ function buildConversationContext(messages: Message[], maxMessages = 6): string 
 // 0. Instant pre-classifier — zero AI calls for trivially simple commands
 // ---------------------------------------------------------------------------
 
+/** Generate a timestamped slug when no folder name is supplied */
+function autoFolderName(): string {
+  const d = new Date();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `workspace-${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}`;
+}
+
 const INSTANT_COMMAND_PATTERNS: Array<{ test: RegExp; cmd: (m: RegExpMatchArray) => string }> = [
-  // "create a folder called src/utils" / "create folder src/utils" / "make a folder named foo"
+  // "create a folder" / "make a folder" — NO name given → auto-name
+  { test: /^(?:create|make|add|new|mkdir)\s+(?:a\s+)?(?:new\s+)?(?:folder|directory|dir)\s*$/i, cmd: () => `mkdir -p ${autoFolderName()}` },
+  // "create a folder called src/utils" / "make a folder named foo"
   { test: /\b(?:create|make|add|mkdir)\s+(?:a\s+)?(?:folder|directory|dir)\s+(?:called\s+|named\s+)?([^\s,]+)/i, cmd: (m) => `mkdir -p ${m[1].replace(/^\//, "")}` },
   // "create src/utils folder" / "add components/ folder"
   { test: /\b(?:create|add|make)\s+([a-zA-Z0-9_./-]+)\s+(?:folder|directory|dir)\b/i, cmd: (m) => `mkdir -p ${m[1].replace(/^\//, "")}` },
@@ -238,6 +247,34 @@ function tryInstantPlan(prompt: string): Task[] | null {
 }
 
 // ---------------------------------------------------------------------------
+// Framework detection — checks existing virtual files for a known framework
+// ---------------------------------------------------------------------------
+function detectFrameworkFromFiles(files: { path: string; content: string }[]): string | null {
+  const pkgFile = files.find(f => f.path === "package.json" || f.path.endsWith("/package.json"));
+  if (pkgFile) {
+    try {
+      const pkg = JSON.parse(pkgFile.content || "{}");
+      const deps = { ...(pkg.dependencies || {}), ...(pkg.devDependencies || {}) };
+      if (deps.next) return "next";
+      if (deps.nuxt || deps["@nuxt/core"]) return "nuxt";
+      if (deps.remix || deps["@remix-run/react"]) return "remix";
+      if (deps["@angular/core"]) return "angular";
+      if (deps.svelte) return "svelte";
+      if (deps.vue) return "vue";
+      if (deps.vite || deps.react) return "react-vite";
+    } catch {}
+  }
+  // Fallback: check file extensions
+  if (files.some(f => f.path.endsWith(".vue"))) return "vue";
+  if (files.some(f => f.path.endsWith(".svelte"))) return "svelte";
+  if (files.some(f => f.path === "vite.config.ts" || f.path === "vite.config.js")) return "react-vite";
+  return null;
+}
+
+/** Prompts that imply the output needs a visible UI / frontend */
+const UI_PROMPT_REGEX = /\b(background|gradient|animation|hero|landing|page|component|ui|app|website|interface|frontend|design|layout|view|screen|dashboard|navbar|button|card|modal|form|color|style|visual|scene|display|render|canvas|image|picture|illustration|pattern|texture|wallpaper|banner|header|footer|sidebar|panel)\b/i;
+
+// ---------------------------------------------------------------------------
 // 1. Dynamic Task Planner — uses Cloudflare AI binding when available
 // ---------------------------------------------------------------------------
 export async function planBuildTasks(userPrompt: string, env?: Partial<AppEnv>, attachment?: any): Promise<Task[]> {
@@ -250,6 +287,21 @@ export async function planBuildTasks(userPrompt: string, env?: Partial<AppEnv>, 
   try {
     const existingFiles = await getFiles();
     const workspaceLayout = existingFiles.map(f => f.path).join(", ") || "None";
+
+    // ── Auto-framework routing ────────────────────────────────────────────────
+    // If the prompt implies UI/frontend work but no framework is in the workspace,
+    // we inject an explicit directive so the AI scaffolds React + Vite first.
+    const detectedFramework = detectFrameworkFromFiles(existingFiles);
+    const needsFramework = UI_PROMPT_REGEX.test(userPrompt) && !detectedFramework;
+    const frameworkDirective = needsFramework
+      ? `\n8. FRAMEWORK AUTO-ROUTING (MANDATORY): The workspace has no frontend framework and this prompt implies UI work. Task #1 MUST be "Bootstrap React + Vite project" with these exact subtasks:
+   - "Create package.json with react, react-dom, vite, @vitejs/plugin-react, tailwindcss, autoprefixer dependencies"
+   - "Create vite.config.ts with react plugin and server port 5173"
+   - "Create index.html with <div id=\\"root\\"> and script type=module pointing to src/main.tsx"
+   - "Create src/main.tsx with ReactDOM.createRoot mounting App component"
+   - "Create src/index.css with Tailwind @tailwind base/components/utilities directives"
+   After that bootstrap task, implement the actual feature in a second task.`
+      : "";
 
     const systemInstruction = `You are a Principal Software Architect. Your job is to break down the user's prompt into an atomic, sequential array of clear, actionable execution tasks.
 Return ONLY valid JSON matching exactly:
@@ -269,7 +321,7 @@ CRITICAL RULES:
 4. When folder creation is requested, the task and subtask must directly represent creating that folder (e.g. "Create src/components/MyFolder folder"). Do NOT make it a multi-step theoretical checklist.
 5. Have strong professional context awareness. Avoid generic placeholder names, redundant terms, or conversational phrases.
 6. Order tasks so dependencies come FIRST. If TaskB imports from TaskA, TaskA must appear earlier.
-7. After code generation tasks, include a "Validate & install dependencies" subtask when new npm packages are needed.`;
+7. After code generation tasks, include a "Validate & install dependencies" subtask when new npm packages are needed.${frameworkDirective}`;
 
     const userContent = `Plan tasks for: "${userPrompt}"\nWorkspace: ${workspaceLayout}`;
 

@@ -25,7 +25,9 @@ import {
   Loader2,
   Sparkles,
   X,
-  Square
+  Square,
+  Play,
+  FolderOpen
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { Message, Task, FileNode, DatabaseStatus } from "./types.js";
@@ -558,6 +560,35 @@ export default function App() {
     const interval = setInterval(updateTime, 1000);
     return () => clearInterval(interval);
   }, []);
+
+  // 7-minute idle timer — start a fresh session when the page has been inactive
+  // and there is content worth saving (don't fire on a blank session).
+  useEffect(() => {
+    const IDLE_MS = 7 * 60 * 1000; // 7 minutes
+    let idleTimer: ReturnType<typeof setTimeout>;
+
+    const resetTimer = () => {
+      clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => {
+        const hasBuildRunning = tasks.some(t => t.status === "running");
+        const hasContent = messages.length > 0 || tasks.length > 0 || files.length > 0;
+        if (!hasBuildRunning && hasContent) {
+          // Auto-save is handled by the session useEffect above; just open fresh
+          handleStartFreshChat();
+        }
+      }, IDLE_MS);
+    };
+
+    const EVENTS = ["mousedown", "mousemove", "keydown", "touchstart", "scroll", "click"];
+    EVENTS.forEach(ev => window.addEventListener(ev, resetTimer, { passive: true }));
+    resetTimer();
+
+    return () => {
+      clearTimeout(idleTimer);
+      EVENTS.forEach(ev => window.removeEventListener(ev, resetTimer));
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tasks, messages.length, files.length]);
 
   // Fetch initial data & connect to live stream
   useEffect(() => {
@@ -1162,14 +1193,27 @@ export default function App() {
           <button
             id="tab-btn-preview"
             onClick={() => setActiveTab("preview")}
-            className={`flex items-center gap-1 sm:gap-2 px-3 sm:px-5 py-1.5 sm:py-2 rounded-full text-[11px] sm:text-xs font-semibold transition-all whitespace-nowrap shrink-0 md:hidden ${
+            className={`flex items-center gap-1 sm:gap-2 px-3 sm:px-5 py-1.5 sm:py-2 rounded-full text-[11px] sm:text-xs font-semibold transition-all whitespace-nowrap shrink-0 ${
               activeTab === "preview" 
                 ? "bg-white text-gray-900 shadow-sm" 
                 : "text-gray-500 hover:text-gray-900"
             }`}
           >
-            <Smartphone className="h-3 w-3 sm:h-3.5 sm:w-3.5" />
+            <Play className="h-3 w-3 sm:h-3.5 sm:w-3.5" />
             <span>Preview</span>
+          </button>
+
+          <button
+            id="tab-btn-files"
+            onClick={() => setActiveTab("code")}
+            className={`flex items-center gap-1 sm:gap-2 px-3 sm:px-5 py-1.5 sm:py-2 rounded-full text-[11px] sm:text-xs font-semibold transition-all whitespace-nowrap shrink-0 ${
+              activeTab === "code" 
+                ? "bg-white text-gray-900 shadow-sm" 
+                : "text-gray-500 hover:text-gray-900"
+            }`}
+          >
+            <FolderOpen className="h-3 w-3 sm:h-3.5 sm:w-3.5" />
+            <span>Files</span>
           </button>
 
           {/* More Dropdown Tab */}

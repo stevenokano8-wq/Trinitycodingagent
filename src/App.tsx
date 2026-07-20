@@ -44,6 +44,7 @@ import ScreenshotsView from "./components/ScreenshotsView.tsx";
 import SettingsView from "./components/SettingsView.tsx";
 import SubtasksSimulationView from "./components/SubtasksSimulationView.tsx";
 import FaceswapChatView from "./components/FaceswapChatView.tsx";
+import LogsView from "./components/LogsView.tsx";
 
 function renderMarkdownMessage(content: string) {
   const lines = content.split("\n");
@@ -1747,24 +1748,12 @@ export default function App() {
           {activeTab === "logs" && (
             <motion.div
               key="logs-panel"
-              className="flex-1 flex flex-col min-h-0 border border-gray-100 rounded-3xl bg-gray-950 p-5 font-mono text-xs text-gray-300"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="flex-1 flex flex-col min-h-0"
             >
-              <div className="flex items-center justify-between border-b border-gray-800 pb-3 mb-4 text-gray-500">
-                <span>TERMINAL SERVICE CONSOLE</span>
-                <span className="text-emerald-500">LIVESTREAM</span>
-              </div>
-              <div className="space-y-1.5 flex-1 overflow-y-auto">
-                <div>[SYSTEM] Container spin-up active. Port 3000 mapped.</div>
-                <div>[SYSTEM] Cloudflare D1 relational status: {dbStatus.d1}</div>
-                <div>[SYSTEM] Cloudflare KV caching pool status: {dbStatus.kv}</div>
-                <div>[HTTP] Listening for SSE handshakes at /api/tasks/stream</div>
-                {files.map(f => (
-                  <div key={f.path} className="text-emerald-400">[FILESYSTEM] Synced synthesized artifact: {f.path}</div>
-                ))}
-                {tasks.map(t => (
-                  <div key={t.id} className="text-amber-500">[COMPILER] Active pipeline registration: "{t.name}"</div>
-                ))}
-              </div>
+              <LogsView dbStatus={dbStatus} files={files} tasks={tasks} onRefresh={fetchInitialData} />
             </motion.div>
           )}
 

@@ -764,17 +764,33 @@ export async function executeAgentBuild(prompt: string, tasks: Task[], env?: Par
           // ── Root-level path overrides: some files MUST live at the project root ──
           // These are checked AFTER AI resolves a path; if the AI put them in
           // a subfolder we correct it here.
+          // IMPORTANT: package.json is intentionally excluded — we NEVER overwrite
+          // an existing root package.json (it contains deploy/CI scripts). New
+          // projects scaffold their deps by MERGING into the existing one.
           const ROOT_LEVEL_FILES: Record<string, { path: string; language: string }> = {
             "vite.config.ts": { path: "vite.config.ts", language: "typescript" },
             "vite.config.js": { path: "vite.config.js", language: "javascript" },
             "index.html":     { path: "index.html",     language: "html" },
-            "package.json":   { path: "package.json",   language: "json" },
             "tailwind.config.ts": { path: "tailwind.config.ts", language: "typescript" },
             "tailwind.config.js": { path: "tailwind.config.js", language: "javascript" },
             "tsconfig.json":  { path: "tsconfig.json",  language: "json" },
             "postcss.config.js": { path: "postcss.config.js", language: "javascript" },
             "postcss.config.ts": { path: "postcss.config.ts", language: "typescript" },
           };
+          
+          // Guard: never overwrite an existing root package.json with a scaffold version
+          const existingRootPkg = currentFiles.find(f => f.path === "package.json");
+          const isPackageJsonTask = sub.name.toLowerCase().includes("package.json");
+          if (isPackageJsonTask && existingRootPkg) {
+            sub.logs.push(`[SKIP] Root package.json already exists — skipping overwrite to preserve CI/deploy scripts. Dependencies will be installed separately.`);
+            broadcastSSE("subtask_log", { subtaskId: sub.id, log: sub.logs[sub.logs.length - 1] });
+            sub.status = "completed";
+            sub.completedAt = new Date().toISOString();
+            task.progress = Math.round(((sIdx + 1) / task.subtasks.length) * 100);
+            await saveTask(task);
+            broadcastSSE("task-update", task);
+            continue;
+          }
 
           try {
             const registryMap = currentFiles.map(f => f.path).join(", ");

@@ -1222,7 +1222,7 @@ export default function App() {
               id="tab-btn-more"
               onClick={() => setIsMoreMenuOpen(!isMoreMenuOpen)}
               className={`flex items-center gap-1 sm:gap-2 px-2.5 sm:px-5 py-1.5 sm:py-2 rounded-full text-[11px] sm:text-xs font-semibold transition-all whitespace-nowrap shrink-0 ${
-                !["chat", "preview", "faceswap"].includes(activeTab) ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"
+                !["chat", "preview", "faceswap", "code"].includes(activeTab) ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"
               }`}
             >
               <span>More</span>
@@ -1244,6 +1244,7 @@ export default function App() {
                       { id: "simulation", name: "Sub-Tasks Simulator", icon: Cpu, color: "text-pink-500 animate-pulse" },
                       { id: "code", name: "Code", icon: Code, color: "text-blue-500" },
                       { id: "deploy", name: "Deploy", icon: Zap, color: "text-amber-500" },
+                      { id: "database", name: "D1 Database Explorer", icon: Database, color: "text-cyan-500" },
                       { id: "logs", name: "Logs", icon: FileText, color: "text-gray-500" },
                       { id: "github", name: "GitHub", icon: Github, color: "text-neutral-800" },
                       { id: "permissions", name: "Permissions", icon: ShieldCheck, color: "text-emerald-500" },
@@ -1299,11 +1300,11 @@ export default function App() {
       <main className="flex-1 max-w-[1800px] w-full mx-auto p-4 sm:p-6 flex flex-col md:grid md:grid-cols-10 gap-6 min-h-0 relative overflow-hidden">
         
         {/* Left Column (active workspace view) */}
-        <div className={`md:col-span-4 flex flex-col min-h-0 h-full overflow-hidden ${["preview", "code"].includes(activeTab) ? "hidden md:flex" : "flex flex-1"}`}>
+        <div className={`${["chat", "preview", "code"].includes(activeTab) ? "md:col-span-4" : "md:col-span-10"} flex flex-col min-h-0 h-full overflow-hidden ${["preview", "code"].includes(activeTab) ? "hidden md:flex" : "flex flex-1"}`}>
           <AnimatePresence mode="wait">
           
           {/* 1. CHAT WORKSPACE VIEW */}
-          {(activeTab === "chat" || activeTab === "code") && (
+          {(activeTab === "chat" || activeTab === "code" || activeTab === "preview") && (
             <motion.div
               key="chat-panel"
               initial={{ opacity: 0, y: 15 }}
@@ -1896,7 +1897,7 @@ export default function App() {
         </div>
 
         {/* Right Column (always-on live preview for large screens; full-screen on mobile when Preview active) */}
-        <div className={`w-full md:col-span-6 flex flex-col min-h-0 h-full overflow-hidden ${activeTab === "faceswap" ? "hidden" : ["preview", "code"].includes(activeTab) ? "flex flex-1" : "hidden md:flex"}`}>
+        <div className={`w-full md:col-span-6 flex flex-col min-h-0 h-full overflow-hidden ${["chat", "preview", "code"].includes(activeTab) ? (["preview", "code"].includes(activeTab) ? "flex flex-1" : "hidden md:flex") : "hidden"}`}>
           {activeTab === "code" ? (
             <CodeView files={files} onUpdateFile={handleUpdateFile} />
           ) : (

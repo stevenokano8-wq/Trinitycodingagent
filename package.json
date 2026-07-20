@@ -4,9 +4,10 @@
   "description": "Trinity Sovereign Coding Agent — Cloudflare Workers + React/Vite",
   "main": "index.html",
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "serve": "vite serve",
+    "dev": "tsx server.ts",
+    "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
+    "start": "node dist/server.cjs",
+    "lint": "tsc --noEmit",
     "deploy:api": "wrangler deploy --config wrangler.api.toml",
     "deploy:frontend": "wrangler deploy --config wrangler.toml",
     "deploy": "npm run build && npm run deploy:api && npm run deploy:frontend"

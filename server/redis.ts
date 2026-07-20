@@ -30,12 +30,41 @@ let _redis: RedisClient | null = null;
 export async function getRedis(): Promise<RedisClient> {
   if (_redis) return _redis;
 
-  const url   = process.env.UPSTASH_REDIS_REST_URL;
-  const token = process.env.UPSTASH_REDIS_REST_TOKEN;
+  let url   = process.env.UPSTASH_REDIS_REST_URL;
+  let token = process.env.UPSTASH_REDIS_REST_TOKEN;
+
+  if (!url || !token) {
+    const rawUrl = process.env.UPSTASH_REDIS_URL || process.env.REDIS_URL;
+    if (rawUrl) {
+      try {
+        const parsed = new URL(rawUrl);
+        const host = parsed.hostname;
+        const password = parsed.password;
+        if (host && password) {
+          url = `https://${host}`;
+          token = password;
+        } else if (host) {
+          const pwd = parsed.username || parsed.pathname.substring(1);
+          if (pwd) {
+            url = `https://${host}`;
+            token = pwd;
+          }
+        }
+      } catch (e) {
+        const match = rawUrl.match(/redis(?:s)?:\/\/([^:]+):([^@]+)@([^:]+)/);
+        if (match) {
+          const password = match[2];
+          const host = match[3];
+          url = `https://${host}`;
+          token = password;
+        }
+      }
+    }
+  }
 
   if (!url || !token) {
     throw new Error(
-      "[Redis] UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN must be set."
+      "[Redis] UPSTASH_REDIS_REST_URL/TOKEN or REDIS_URL/UPSTASH_REDIS_URL connection string must be set."
     );
   }
 

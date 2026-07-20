@@ -372,27 +372,18 @@ export default function App() {
   // previous calendar day it's treated as stale and a new one is created.
   // The old session is still accessible via the sidebar history.
   const [activeSessionId, setActiveSessionId] = useState<string>(() => {
-    const storedId = localStorage.getItem("trinity_active_session_id");
-    if (storedId) {
-      try {
-        const savedRaw = localStorage.getItem("trinity_saved_sessions");
-        if (savedRaw) {
-          const sessions: any[] = JSON.parse(savedRaw);
-          const match = sessions.find((s: any) => s.id === storedId);
-          if (match?.lastUpdated) {
-            const sessionDay = new Date(match.lastUpdated).toDateString();
-            const today = new Date().toDateString();
-            if (sessionDay === today) {
-              // Same-day refresh — restore the session as-is
-              return storedId;
-            }
-          }
-        }
-      } catch (_) {}
+    // Use sessionStorage to distinguish same-tab refresh from a genuinely new tab/window.
+    // sessionStorage is cleared whenever the tab is closed or a new tab is opened,
+    // so "last session lingering on fresh page" is fixed automatically.
+    const tabSessionId = sessionStorage.getItem("trinity_tab_session_id");
+    if (tabSessionId) {
+      // Same tab refresh — restore the in-progress session
+      return tabSessionId;
     }
-    // Different day or no stored session — start fresh
+    // New tab or window — always start a blank session regardless of the day
     const freshId = "session-" + Date.now();
     localStorage.setItem("trinity_active_session_id", freshId);
+    sessionStorage.setItem("trinity_tab_session_id", freshId);
     return freshId;
   });
   const [savedSessions, setSavedSessions] = useState<any[]>([]);
@@ -455,6 +446,7 @@ export default function App() {
     const newSessionId = "session-" + Date.now();
     setActiveSessionId(newSessionId);
     localStorage.setItem("trinity_active_session_id", newSessionId);
+    sessionStorage.setItem("trinity_tab_session_id", newSessionId);
 
     // Clear local React state
     setMessages([]);
@@ -712,7 +704,51 @@ export default function App() {
     }
   };
 
-  const connectSSE = () => {
+  // Polling fallback: re-sync messages+tasks from server every 2.5s while a
+  // build is running. This guards against SSE messages being lost when the
+  // Cloudflare Worker spins up a new isolate for the build execution.
+  const pollingRef = React.useRef<ReturnType<typeof setInterval> | null>(null);
+  useEffect(() => {
+    const isRunning = tasks.some(t => t.status === "running") || isSending;
+    if (isRunning) {
+      if (!pollingRef.current) {
+        pollingRef.current = setInterval(async () => {
+          try {
+            const [mRes, tRes] = await Promise.all([
+              fetch(`${API_BASE}/api/messages`),
+              fetch(`${API_BASE}/api/tasks`),
+            ]);
+            if (mRes.ok) {
+              const msgs = await mRes.json() as any[];
+              if (Array.isArray(msgs) && msgs.length > 0) {
+                setMessages(prev => {
+                  const existingIds = new Set(prev.map((m: any) => m.id));
+                  const newMsgs = msgs.filter((m: any) => !existingIds.has(m.id));
+                  return newMsgs.length > 0 ? [...prev, ...newMsgs] : prev;
+                });
+              }
+            }
+            if (tRes.ok) {
+              const tks = await tRes.json() as any[];
+              if (Array.isArray(tks) && tks.length > 0) {
+                setTasks(tks);
+              }
+            }
+          } catch { /* ignore polling errors */ }
+        }, 2500);
+      }
+    } else {
+      if (pollingRef.current) {
+        clearInterval(pollingRef.current);
+        pollingRef.current = null;
+      }
+    }
+    return () => {
+      if (pollingRef.current) { clearInterval(pollingRef.current); pollingRef.current = null; }
+    };
+  }, [tasks, isSending]);
+
+    const connectSSE = () => {
     // Prevent multiple overlapping connections or timers
     if (eventSourceRef.current) {
       eventSourceRef.current.close();
@@ -727,6 +763,7 @@ export default function App() {
 
     eventSource.onopen = () => {
       setIsConnectedSSE(true);
+      (sseTimeoutRef as any)._attempts = 0; // reset backoff on success
       console.log("SSE Pipeline active.");
     };
 
@@ -740,9 +777,13 @@ export default function App() {
         if (sseTimeoutRef.current) {
           clearTimeout(sseTimeoutRef.current);
         }
+        // Exponential backoff: 2s → 4s → 8s → 16s → 30s cap
+        const attempts = (sseTimeoutRef as any)._attempts ?? 0;
+        const delay = Math.min(2000 * Math.pow(2, attempts), 30000);
+        (sseTimeoutRef as any)._attempts = attempts + 1;
         sseTimeoutRef.current = setTimeout(() => {
           connectSSE();
-        }, 2000);
+        }, delay);
       }
     };
 

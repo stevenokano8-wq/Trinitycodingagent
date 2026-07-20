@@ -378,9 +378,34 @@ app.get("/api/tasks/stream", (req, res) => {
 });
 
 async function startServer() {
+  // Inject Upstash Redis credentials so the cache layer picks them up before
+  // initCache() runs. Cloudflare KV is only available in the deployed Worker
+  // (via the CACHE_KV binding), so local dev relies on Upstash REST instead.
+  {
+    const rUrl   = process.env.UPSTASH_REDIS_REST_URL;
+    const rToken = process.env.UPSTASH_REDIS_REST_TOKEN;
+    if (rUrl && rToken) {
+      setRuntimeOverrides({ UPSTASH_REDIS_REST_URL: rUrl, UPSTASH_REDIS_REST_TOKEN: rToken } as any);
+    }
+
+    // Also pick up GitHub credentials from env if not already overridden
+    const ghToken = process.env.GITHUB_TOKEN;
+    const ghRepo  = process.env.GITHUB_REPO_URL;
+    if (ghToken || ghRepo) {
+      const existing = resolveEnvWithOverrides();
+      setRuntimeOverrides({
+        ...existing,
+        ...(ghToken  ? { GITHUB_TOKEN: ghToken }     : {}),
+        ...(ghRepo   ? { GITHUB_REPO_URL: ghRepo }   : {}),
+        ...(rUrl     ? { UPSTASH_REDIS_REST_URL: rUrl }   : {}),
+        ...(rToken   ? { UPSTASH_REDIS_REST_TOKEN: rToken } : {}),
+      } as any);
+    }
+  }
+
   // Initialize Database (in-memory locally; D1 in the deployed Worker)
   const dStatus = await initDb();
-  // Initialize Cache (in-memory locally; Workers KV in the deployed Worker)
+  // Initialize Cache (KV → Upstash REST → in-memory, depending on available bindings)
   const cStatus = await initCache();
 
   dbStatus = {

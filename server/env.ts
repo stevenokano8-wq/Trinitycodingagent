@@ -170,6 +170,13 @@ export interface AppEnv {
   GEMINI_API_KEY?: string;
   GITHUB_TOKEN?: string;
   GITHUB_REPO_URL?: string;
+
+  // ── Upstash Redis REST (fetch-based; works in Node + CF Workers) ───────────
+  // Used as the cache tier between Cloudflare KV (production binding) and the
+  // in-memory fallback. Set these as wrangler secrets for the Worker, and in
+  // .env for local development.
+  UPSTASH_REDIS_REST_URL?: string;
+  UPSTASH_REDIS_REST_TOKEN?: string;
 }
 
 // ── Queue message shape ───────────────────────────────────────────────────────

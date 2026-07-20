@@ -102,6 +102,14 @@ app.get("/api/sessions", async (c) => {
   const res = await c.env.WORKSPACE_REGISTRY.get(regId).fetch(new Request("https://do/sessions"));
   return new Response(res.body, { status: res.status, headers: res.headers });
 });
+// ── Session clear (wipes messages + tasks + files for a fresh start) ─────────
+app.post("/api/session/clear", async (c) => {
+  await ensureInit(c.env);
+  await Promise.all([clearMessages(), deleteTasks(), clearFiles()]);
+  broadcastSSE("session-cleared", { ts: new Date().toISOString() });
+  return c.json({ success: true });
+});
+
 
 // ── Specific Session Workspace File Operations ───────────────────────────────
 

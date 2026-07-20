@@ -34,20 +34,34 @@ export function getGeminiClient(env?: Partial<AppEnv>): GoogleGenAI | null {
 // determination.  Gemini handles heavy code synthesis.  Locally (pnpm dev,
 // no binding), this falls back to a Gemini Flash call so dev still works.
 
-// llama-3.1-8b-instruct was deprecated 2026-05-30; use the fp8-fast 70B instead.
-// Smartest CF Workers AI models by task type
-const CF_PLAN_MODEL = "@cf/deepseek-ai/deepseek-r1-distill-llama-70b";  // Best reasoning
-const CF_CODE_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";     // Best code gen
-const CF_FAST_MODEL = "@cf/meta/llama-3.1-8b-instruct-fast";           // Sub-100ms tasks
+// Model availability (2026-07):
+//   @cf/deepseek-ai/deepseek-r1-distill-llama-70b — REMOVED from CF Workers AI (error 5007)
+//   @cf/meta/llama-3.1-8b-instruct (without -fast)  — deprecated 2026-05-30
+const CF_PLAN_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast"; // Planning & reasoning (was DeepSeek R1, now removed)
+const CF_CODE_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast"; // Code generation
+const CF_FAST_MODEL = "@cf/meta/llama-3.1-8b-instruct-fast";      // Sub-100ms structured calls (commands, path resolution)
 
 async function runCfAi(
   ai: AiBinding,
   messages: AiChatMessage[],
-  maxTokens = 1024
+  maxTokens = 1024,
+  model: string = CF_PLAN_MODEL
 ): Promise<string> {
-  const result = await ai.run(CF_PLAN_MODEL, { messages, max_tokens: maxTokens });
+  const result = await ai.run(model, { messages, max_tokens: maxTokens });
   // extractCfAiText handles both OpenAI-style choices[] and legacy response field
   return extractCfAiText(result);
+}
+
+/**
+ * Fast path: uses the lightweight 8B model for sub-100ms structured tasks
+ * (command determination, path resolution). Saves DeepSeek capacity for planning.
+ */
+async function runCfAiFast(
+  ai: AiBinding,
+  messages: AiChatMessage[],
+  maxTokens = 256
+): Promise<string> {
+  return runCfAi(ai, messages, maxTokens, CF_FAST_MODEL);
 }
 
 // Convenience: run a planning prompt, preferring CF AI over Gemini Flash.
@@ -195,9 +209,44 @@ function buildConversationContext(messages: Message[], maxMessages = 6): string 
 }
 
 // ---------------------------------------------------------------------------
+// 0. Instant pre-classifier — zero AI calls for trivially simple commands
+// ---------------------------------------------------------------------------
+
+const INSTANT_COMMAND_PATTERNS: Array<{ test: RegExp; cmd: (m: RegExpMatchArray) => string }> = [
+  // "create a folder called src/utils" / "create folder src/utils" / "make a folder named foo"
+  { test: /\b(?:create|make|add|mkdir)\s+(?:a\s+)?(?:folder|directory|dir)\s+(?:called\s+|named\s+)?([^\s,]+)/i, cmd: (m) => `mkdir -p ${m[1].replace(/^\//, "")}` },
+  // "create src/utils folder" / "add components/ folder"
+  { test: /\b(?:create|add|make)\s+([a-zA-Z0-9_./-]+)\s+(?:folder|directory|dir)\b/i, cmd: (m) => `mkdir -p ${m[1].replace(/^\//, "")}` },
+  // plain "mkdir src/utils" at start of prompt
+  { test: /^mkdir\s+(-p\s+)?([a-zA-Z0-9_./-]+)/i, cmd: (m) => `mkdir -p ${(m[2] || m[1]).replace(/^\//, "")}` },
+];
+
+/** Returns a ready-made task list for simple commands without any AI call (<1 ms). */
+function tryInstantPlan(prompt: string): Task[] | null {
+  for (const p of INSTANT_COMMAND_PATTERNS) {
+    const m = prompt.trim().match(p.test);
+    if (m) {
+      const command = p.cmd(m);
+      const folder = command.replace(/^mkdir -p /, "");
+      const taskId = `task-${Date.now()}`;
+      return [{ id: taskId, name: `Create folder ${folder}`, status: "pending", progress: 0,
+        activeSubtaskIndex: 0, createdAt: new Date().toISOString(),
+        subtasks: [{ id: `${taskId}-sub-0`, taskId, name: command, status: "pending", logs: ["Awaiting run..."] }] }];
+    }
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
 // 1. Dynamic Task Planner — uses Cloudflare AI binding when available
 // ---------------------------------------------------------------------------
 export async function planBuildTasks(userPrompt: string, env?: Partial<AppEnv>, attachment?: any): Promise<Task[]> {
+  // ── Instant path: no AI call for trivial folder/command prompts ────────────
+  if (!attachment) {
+    const instant = tryInstantPlan(userPrompt);
+    if (instant) return instant;
+  }
+
   try {
     const existingFiles = await getFiles();
     const workspaceLayout = existingFiles.map(f => f.path).join(", ") || "None";
@@ -523,8 +572,12 @@ export async function executeAgentBuild(prompt: string, tasks: Task[], env?: Par
         broadcastSSE("subtask_log", { subtaskId: sub.id, log: sub.logs[0] });
         await saveTask(task);
 
-        // Check if this is a terminal/command subtask
-        const isCommandTask = /^(run|execute|install|npm|npx|mkdir|create folder|delete|move|copy)\s/i.test(sub.name.trim()) ||
+        // Check if this is a terminal/command subtask.
+        // Fix: broadened to catch "Create X folder", "mkdir -p X", and instant-plan names.
+        const isCommandTask =
+          /^(run|execute|install|npm|npx|mkdir|delete|move|copy)\s/i.test(sub.name.trim()) ||
+          /\bcreate\s+(?:a\s+)?(?:folder|directory|dir)\b/i.test(sub.name) ||
+          /\b(?:folder|directory)\s+[a-zA-Z0-9_./-]+\s*$/i.test(sub.name) ||
           sub.name.toLowerCase().includes("install dependencies") ||
           sub.name.toLowerCase().includes("validate") ||
           sub.name.toLowerCase().includes("run tests");
@@ -539,10 +592,10 @@ export async function executeAgentBuild(prompt: string, tasks: Task[], env?: Par
             const cmdUserContent = `Task: "${sub.name}" in the context of request: "${prompt}". Existing workspace files: [${currentFiles.map(f => f.path).join(", ")}]. Return only the shell command string.`;
 
             if (cfAi) {
-              const cfResponse = await runCfAi(
+              // Fast 8B model is enough for short command resolution — no need for the 70B planner
+              const cfResponse = await runCfAiFast(
                 cfAi,
-                [{ role: "system", content: cmdSystemPrompt }, { role: "user", content: cmdUserContent }],
-                256
+                [{ role: "system", content: cmdSystemPrompt }, { role: "user", content: cmdUserContent }]
               );
               command = cfResponse.trim().replace(/^```[\w]*\n?/, "").replace(/\n?```$/, "").trim();
               modelsUsed.add("CF-AI");
@@ -574,13 +627,42 @@ export async function executeAgentBuild(prompt: string, tasks: Task[], env?: Par
             if (!safeCheck.safe) {
               sub.logs.push(`[CMD] ⚠️ Command blocked by security policy: ${safeCheck.reason}`);
             } else {
-              const cmdResult = await executeTerminalCommand(command, { timeoutMs: 60000 });
-              if (cmdResult.success) {
-                sub.logs.push(`[CMD] ✅ Command succeeded: ${cmdResult.stdout.substring(0, 300)}`);
-                actionsTaken.push({ type: 'run_command', pathOrCommand: command, success: true });
-              } else {
-                sub.logs.push(`[CMD] ⚠️ Command output: ${(cmdResult.stderr || cmdResult.stdout).substring(0, 300)}`);
-                actionsTaken.push({ type: 'run_command', pathOrCommand: command, success: false });
+              // Helper: register a folder in D1 virtual filesystem (used as fallback when
+              // child_process is unavailable — CF Workers has a shim that throws on exec).
+              const virtualMkdir = async (cmd: string) => {
+                const folderPath = cmd.replace(/^mkdir\s+(-p\s+)?/, "").trim();
+                const gitkeepPath = `${folderPath.replace(/\/$/, "")}/.gitkeep`;
+                await saveFile({ path: gitkeepPath, content: "", language: "text" });
+                sub.logs.push(`[CMD] ✅ Folder created (virtual): ${folderPath}`);
+                broadcastSSE("file-created", { path: gitkeepPath, content: "", language: "text" });
+                actionsTaken.push({ type: 'create_folder', pathOrCommand: folderPath, success: true });
+              };
+
+              let cmdResult;
+              try {
+                cmdResult = await executeTerminalCommand(command, { timeoutMs: 60000 });
+              } catch (execErr: any) {
+                // CF Workers' child_process shim throws synchronously instead of returning failure
+                if (/^mkdir\b/.test(command.trim())) {
+                  await virtualMkdir(command);
+                } else {
+                  sub.logs.push(`[CMD] ⚠️ Exec error: ${execErr.message}`);
+                  actionsTaken.push({ type: 'run_command', pathOrCommand: command, success: false });
+                }
+                cmdResult = null;
+              }
+
+              if (cmdResult) {
+                if (cmdResult.success) {
+                  sub.logs.push(`[CMD] ✅ Command succeeded: ${cmdResult.stdout.substring(0, 300)}`);
+                  actionsTaken.push({ type: 'run_command', pathOrCommand: command, success: true });
+                } else if (/^mkdir\b/.test(command.trim())) {
+                  // executeTerminalCommand returned failure (no child_process) — use virtual fallback
+                  await virtualMkdir(command);
+                } else {
+                  sub.logs.push(`[CMD] ⚠️ Command output: ${(cmdResult.stderr || cmdResult.stdout).substring(0, 300)}`);
+                  actionsTaken.push({ type: 'run_command', pathOrCommand: command, success: false });
+                }
               }
             }
 
@@ -634,7 +716,8 @@ export async function executeAgentBuild(prompt: string, tasks: Task[], env?: Par
 
             let pathRaw = "";
             if (cfAi) {
-              pathRaw = await runCfAi(
+              // Fast 8B model is sufficient for structured path resolution (short, deterministic)
+              pathRaw = await runCfAiFast(
                 cfAi,
                 [{ role: "system", content: pathSystemPrompt }, { role: "user", content: pathUserContent }],
                 256

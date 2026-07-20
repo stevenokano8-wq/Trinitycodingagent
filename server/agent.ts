@@ -761,9 +761,34 @@ export async function executeAgentBuild(prompt: string, tasks: Task[], env?: Par
             targetPath = promptMatch[1].trim().replace(/^\/+/, "");
           }
 
+          // ── Root-level path overrides: some files MUST live at the project root ──
+          // These are checked AFTER AI resolves a path; if the AI put them in
+          // a subfolder we correct it here.
+          const ROOT_LEVEL_FILES: Record<string, { path: string; language: string }> = {
+            "vite.config.ts": { path: "vite.config.ts", language: "typescript" },
+            "vite.config.js": { path: "vite.config.js", language: "javascript" },
+            "index.html":     { path: "index.html",     language: "html" },
+            "package.json":   { path: "package.json",   language: "json" },
+            "tailwind.config.ts": { path: "tailwind.config.ts", language: "typescript" },
+            "tailwind.config.js": { path: "tailwind.config.js", language: "javascript" },
+            "tsconfig.json":  { path: "tsconfig.json",  language: "json" },
+            "postcss.config.js": { path: "postcss.config.js", language: "javascript" },
+            "postcss.config.ts": { path: "postcss.config.ts", language: "typescript" },
+          };
+
           try {
             const registryMap = currentFiles.map(f => f.path).join(", ");
-            const pathSystemPrompt = `You are a Principal Software Engineer. Determine the most appropriate file path (including correct folders and extension) and programming language to implement the given subtask. Rules: Choose standard professional paths (e.g., components in "src/components/", backend routes/apis in "server/routes/" or "server/api/", DB schema in "src/db/schema.ts" or "server/schema.ts"). Keep it highly professional and literal. DO NOT hardcode placeholder names. If the subtask is about folder creation, return the folder path with a "/.gitkeep" file. Return ONLY valid JSON: {"path": "the/file/path.ext", "language": "typescript|json|css"}`;
+            const pathSystemPrompt = `You are a Principal Software Engineer. Determine the most appropriate file path and programming language for the given subtask.
+CRITICAL PATH RULES:
+- Root-level config files go at ROOT, never inside src/: vite.config.ts → "vite.config.ts", index.html → "index.html", package.json → "package.json", tailwind.config.ts → "tailwind.config.ts", tsconfig.json → "tsconfig.json", postcss.config.js → "postcss.config.js"
+- React components → "src/components/<ComponentName>.tsx"
+- App entry → "src/App.tsx"
+- React main → "src/main.tsx"
+- CSS global → "src/index.css"
+- Backend routes/APIs → "server/routes/<name>_api.ts"
+- DB schema → "src/db/schema.ts" or "server/schema.ts"
+- Use descriptive names matching the ACTUAL feature (not "analyze_and_write_fe" or other generic placeholder names)
+- Return ONLY valid JSON: {"path": "the/file/path.ext", "language": "typescript|json|css|html|javascript"}`;
             const pathUserContent = `Subtask: "${sub.name}" for overall request: "${prompt}". Existing files: [${registryMap}]. Return only the JSON object.`;
 
             let pathRaw = "";
@@ -787,12 +812,29 @@ export async function executeAgentBuild(prompt: string, tasks: Task[], env?: Par
             if (pathRaw) {
               const pathResult = safeParseJSON(pathRaw);
               if (pathResult.path) {
-                targetPath = pathResult.path.trim().replace(/^\/+/, ""); // remove leading slashes
-                language = pathResult.language || "typescript";
+                let resolvedPath = pathResult.path.trim().replace(/^\/+/, "");
+                // Apply root-level overrides: if AI put a known root file inside a subdir, correct it
+                const filename = resolvedPath.split("/").pop() ?? "";
+                if (ROOT_LEVEL_FILES[filename]) {
+                  resolvedPath = ROOT_LEVEL_FILES[filename].path;
+                  language = ROOT_LEVEL_FILES[filename].language;
+                } else {
+                  language = pathResult.language || "typescript";
+                }
+                targetPath = resolvedPath;
               }
             }
           } catch (pathErr) {
             console.error("Failed to dynamically determine path, using fallback:", pathErr);
+          }
+
+          // Also apply root-level override to paths extracted from subtask name regex
+          {
+            const filename = targetPath.split("/").pop() ?? "";
+            if (ROOT_LEVEL_FILES[filename]) {
+              targetPath = ROOT_LEVEL_FILES[filename].path;
+              language = ROOT_LEVEL_FILES[filename].language;
+            }
           }
 
           // Fallback if dynamic resolution fails

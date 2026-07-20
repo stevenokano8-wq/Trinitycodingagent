@@ -189,6 +189,63 @@ app.get("/api/messages", async (c) => {
   return c.json(await getMessages());
 });
 
+app.post("/api/messages", async (c) => {
+  await ensureInit(c.env);
+  try {
+    const { role, content, attachment } = await c.req.json().catch(() => ({})) as any;
+    if (!content) {
+      return c.json({ error: "Content is required" }, 400);
+    }
+
+    const userMsg: Message = {
+      id: `msg-${Date.now()}-user`,
+      role: role || "user",
+      content,
+      timestamp: new Date().toISOString(),
+      attachment,
+    };
+
+    // Save user message to database
+    await addMessage(userMsg);
+    broadcastSSE("message-added", userMsg);
+
+    // If it's a user command, trigger the agent task planner and background executor
+    if (userMsg.role === "user") {
+      try {
+        // Step 1: Generate Tasks and Subtasks list with Gemini (with fallback)
+        const plannedTasks = await planBuildTasks(content, c.env, attachment);
+        
+        // Save initial tasks to SQL relational store
+        for (const task of plannedTasks) {
+          // Link first task to the message
+          if (!userMsg.taskId) {
+            userMsg.taskId = task.id;
+          }
+          await saveTask(task);
+        }
+
+        // Trigger background asynchronous compilation/synthesis worker
+        const buildPromise = executeAgentBuild(content, plannedTasks, c.env, attachment);
+        if (c.executionCtx && typeof c.executionCtx.waitUntil === "function") {
+          c.executionCtx.waitUntil(buildPromise);
+        } else {
+          buildPromise.catch(console.error);
+        }
+
+        return c.json({ message: userMsg, tasks: plannedTasks });
+      } catch (agentErr: any) {
+        console.error("Agent planning error:", agentErr);
+        return c.json({ message: userMsg, error: agentErr.message });
+      }
+    } else {
+      return c.json({ message: userMsg });
+    }
+  } catch (err: any) {
+    console.error("API messages insert error:", err);
+    return c.json({ error: err.message }, 500);
+  }
+});
+
 app.delete("/api/messages", async (c) => {
   await ensureInit(c.env);
   await clearMessages();

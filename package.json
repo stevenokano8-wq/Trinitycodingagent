@@ -19,7 +19,9 @@
     "lucide-react": "^0.447.0",
     "hono": "^4.6.5",
     "@google/genai": "^0.7.0",
-    "motion": "^11.11.17"
+    "motion": "^11.11.17",
+    "@cloudflare/agents": "^0.0.74",
+    "@cloudflare/sandbox": "^0.0.6"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.2",

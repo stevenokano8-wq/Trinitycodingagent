@@ -212,7 +212,10 @@ app.post("/api/messages", async (c) => {
     // If it's a user command, trigger the agent task planner and background executor
     if (userMsg.role === "user") {
       try {
-        // Step 1: Generate Tasks and Subtasks list with Gemini (with fallback)
+        // Signal immediately so UI shows a "planning" indicator without waiting
+        broadcastSSE("agent-planning", { prompt: content, messageId: userMsg.id });
+
+        // Step 1: Generate Tasks and Subtasks list (now uses fast model — <2s)
         const plannedTasks = await planBuildTasks(content, c.env, attachment);
         
         // Save initial tasks to SQL relational store
@@ -223,6 +226,9 @@ app.post("/api/messages", async (c) => {
           }
           await saveTask(task);
         }
+
+        // Broadcast planned tasks immediately so same-isolate SSE clients show accordion now
+        broadcastSSE("tasks-planned", { tasks: plannedTasks, messageId: userMsg.id });
 
         // Trigger background asynchronous compilation/synthesis worker
         const buildPromise = executeAgentBuild(content, plannedTasks, c.env, attachment);

@@ -34,12 +34,12 @@ export function getGeminiClient(env?: Partial<AppEnv>): GoogleGenAI | null {
 // determination.  Gemini handles heavy code synthesis.  Locally (pnpm dev,
 // no binding), this falls back to a Gemini Flash call so dev still works.
 
-// Model availability (2026-07):
-//   @cf/deepseek-ai/deepseek-r1-distill-llama-70b — REMOVED from CF Workers AI (error 5007)
-//   @cf/meta/llama-3.1-8b-instruct (without -fast)  — deprecated 2026-05-30
-const CF_PLAN_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast"; // Planning & reasoning (was DeepSeek R1, now removed)
-const CF_CODE_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast"; // Code generation
-const CF_FAST_MODEL = "@cf/meta/llama-3.1-8b-instruct-fast";      // Sub-100ms structured calls (commands, path resolution)
+// Model selection (2026-07):
+//   DeepSeek R1 removed from CF Workers AI — was causing 30-90s delays
+//   llama-3.1-8b-instruct (without -fast) deprecated 2026-05-30
+const CF_PLAN_MODEL = '@cf/meta/llama-3.1-8b-instruct-fast';      // Planning: fast 8B, was DeepSeek R1 (30-90s)
+const CF_CODE_MODEL = '@cf/meta/llama-3.3-70b-instruct-fp8-fast'; // Code gen: best quality
+const CF_FAST_MODEL = '@cf/meta/llama-3.1-8b-instruct-fast';      // Sub-200ms commandsel)
 
 async function runCfAi(
   ai: AiBinding,

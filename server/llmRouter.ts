@@ -118,8 +118,10 @@ export function routeLLMTask(
   }
 
   // Determine classification threshold (score of 4 or higher indicates complex)
+  // NOTE: DeepSeek R1 was removed — it caused 30-90s delays per subtask.
+  // Llama 3.3 70B fp8-fast handles all complexity levels with <5s latency.
   const complexity = score >= 4 ? "complex" : "simple";
-  const model = complexity === "complex" ? "@cf/deepseek-ai/deepseek-r1-distill-llama-70b" : "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
+  const model = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
 
   let finalReason = "";
   if (reasons.length === 0) {

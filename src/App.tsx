@@ -608,7 +608,7 @@ export default function App() {
           }
         }
       } catch (_) {}
-    }, 5000);
+    }, 2000); // Reduced from 5s → 2s so the accordion updates faster during active builds
     return () => clearInterval(pollInterval);
   }, [tasks.some(t => t.status === "running")]);
 
@@ -721,6 +721,26 @@ export default function App() {
       if (data && data.status === "refreshed") {
         // This event fires after POST /api/session/load — server data is authoritative here
         fetchInitialData({ serverOnly: true });
+      }
+    });
+
+    eventSource.addEventListener("agent-planning", (e: any) => {
+      const data = JSON.parse(e.data);
+      setCurrentPrompt(data.prompt ?? "");
+      setTasks([]);
+      setThinkingState({
+        stage: "understanding",
+        text: "Planning tasks — analyzing your prompt...",
+        elapsed: 0.3,
+        isThinking: true
+      });
+    });
+
+    eventSource.addEventListener("tasks-planned", (e: any) => {
+      const data = JSON.parse(e.data);
+      if (Array.isArray(data.tasks) && data.tasks.length > 0) {
+        setTasks(data.tasks);
+        setThinkingState(null);
       }
     });
 

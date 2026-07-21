@@ -27,7 +27,11 @@ import {
   X,
   Square,
   Play,
-  FolderOpen
+  FolderOpen,
+  Calendar,
+  Activity,
+  FileCode,
+  CheckCircle
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { Message, Task, FileNode, DatabaseStatus } from "./types.js";
@@ -388,6 +392,7 @@ export default function App() {
     return freshId;
   });
   const [savedSessions, setSavedSessions] = useState<any[]>([]);
+  const [expandedSessionId, setExpandedSessionId] = useState<string | null>(null);
   const [previewReloadKey, setPreviewReloadKey] = useState<number>(0);
   const [isLoadingSession, setIsLoadingSession] = useState<boolean>(false);
 
@@ -413,6 +418,10 @@ export default function App() {
     const firstUserMsg = messages.find(m => m.role === "user");
     const title = firstUserMsg ? firstUserMsg.content : "Workspace Session";
 
+    const saved = localStorage.getItem("trinity_saved_sessions");
+    let sessionsList: any[] = saved ? JSON.parse(saved) : [];
+    const existingSession = sessionsList.find(s => s.id === activeSessionId);
+
     const sessionData = {
       id: activeSessionId,
       title: title.substring(0, 60) + (title.length > 60 ? "..." : ""),
@@ -420,11 +429,9 @@ export default function App() {
       tasks,
       files,
       currentPrompt,
+      createdAt: existingSession?.createdAt || new Date().toISOString(),
       lastUpdated: new Date().toISOString()
     };
-
-    const saved = localStorage.getItem("trinity_saved_sessions");
-    let sessionsList: any[] = saved ? JSON.parse(saved) : [];
 
     const existingIdx = sessionsList.findIndex(s => s.id === activeSessionId);
     if (existingIdx >= 0) {
@@ -526,6 +533,14 @@ export default function App() {
     })
       .catch(err => console.error("Error syncing session load to backend:", err))
       .finally(() => setIsLoadingSession(false));
+  };
+
+  const handleSpinUpSessionPreview = async (session: any, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    setIsSidebarOpen(false);
+    await handleLoadSession(session);
+    setActiveTab("preview");
+    setPreviewReloadKey(Date.now());
   };
 
   const handleDeleteSession = (sessionId: string, e: React.MouseEvent) => {
@@ -2105,48 +2120,174 @@ export default function App() {
                       No saved chat sessions yet.
                     </div>
                   ) : (
-                    <div className="space-y-2 max-h-56 overflow-y-auto scrollbar-thin pr-1">
+                    <div className="space-y-3 max-h-72 overflow-y-auto scrollbar-thin pr-1">
                       {savedSessions.map((session) => {
                         const isActive = session.id === activeSessionId;
+                        const isExpanded = expandedSessionId === session.id;
+                        
+                        const userMsgCount = (session.messages || []).filter((m: any) => m.role === "user").length;
+                        const taskCount = (session.tasks || []).length;
+                        const fileCount = (session.files || []).length;
+                        
+                        const startedTimeStr = session.createdAt ? new Date(session.createdAt).toLocaleDateString([], {
+                          month: 'short',
+                          day: 'numeric',
+                          hour: '2-digit',
+                          minute: '2-digit'
+                        }) : null;
+
+                        const updatedTimeStr = new Date(session.lastUpdated).toLocaleDateString([], {
+                          month: 'short',
+                          day: 'numeric',
+                          hour: '2-digit',
+                          minute: '2-digit'
+                        });
+
                         return (
                           <div
                             key={session.id}
                             id={`session-item-${session.id}`}
-                            onClick={() => handleLoadSession(session)}
-                            className={`group relative flex items-center justify-between p-3 rounded-xl border text-left cursor-pointer transition-all ${
+                            className={`group relative flex flex-col p-3 rounded-2xl border text-left transition-all ${
                               isActive
-                                ? "bg-amber-50/70 border-amber-200 text-amber-900 shadow-xs font-semibold"
-                                : "bg-gray-50/50 hover:bg-gray-100/70 border-gray-150 text-gray-700 hover:text-gray-900"
+                                ? "bg-amber-50/80 border-amber-300 shadow-sm text-amber-950 font-medium"
+                                : "bg-gray-50/60 hover:bg-gray-100/80 border-gray-200 text-gray-700"
                             }`}
                           >
-                            <div className="flex items-center gap-2.5 min-w-0 flex-1">
-                              <MessageSquare className={`h-3.5 w-3.5 shrink-0 ${
-                                isActive ? "text-amber-500" : "text-gray-400 group-hover:text-gray-600"
-                              }`} />
-                              <div className="min-w-0 flex-1 font-sans">
-                                <p className="text-xs truncate font-semibold">
-                                  {session.title || "Workspace Session"}
-                                </p>
-                                <p className="text-[9px] text-gray-400 font-mono mt-0.5">
-                                  {new Date(session.lastUpdated).toLocaleDateString([], {
-                                    month: 'short',
-                                    day: 'numeric',
-                                    hour: '2-digit',
-                                    minute: '2-digit'
-                                  })}
-                                </p>
+                            {/* Top header row */}
+                            <div 
+                              onClick={() => handleLoadSession(session)} 
+                              className="flex items-start justify-between gap-2 cursor-pointer"
+                            >
+                              <div className="flex items-start gap-2 min-w-0 flex-1">
+                                <MessageSquare className={`h-4 w-4 shrink-0 mt-0.5 ${
+                                  isActive ? "text-amber-600 animate-pulse" : "text-gray-400 group-hover:text-gray-600"
+                                }`} />
+                                <div className="min-w-0 flex-1 font-sans">
+                                  <p className="text-xs truncate font-bold text-gray-900 leading-snug">
+                                    {session.title || "Workspace Session"}
+                                  </p>
+                                  
+                                  {/* Timestamps Section */}
+                                  <div className="flex flex-col gap-0.5 mt-1">
+                                    {startedTimeStr && (
+                                      <p className="text-[9px] text-gray-500 font-mono flex items-center gap-1">
+                                        <Calendar className="h-2.5 w-2.5 text-gray-400 shrink-0" />
+                                        <span>Started: {startedTimeStr}</span>
+                                      </p>
+                                    )}
+                                    <p className="text-[9px] text-amber-700/80 font-mono flex items-center gap-1">
+                                      <Clock className="h-2.5 w-2.5 text-amber-500 shrink-0" />
+                                      <span>Updated: {updatedTimeStr}</span>
+                                    </p>
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Delete action button */}
+                              <button
+                                type="button"
+                                onClick={(e) => handleDeleteSession(session.id, e)}
+                                className="opacity-0 group-hover:opacity-100 p-1 hover:bg-gray-200/80 hover:text-red-600 rounded-lg transition-all text-gray-400 shrink-0"
+                                title="Delete Session"
+                              >
+                                <Trash2 className="h-3 w-3" />
+                              </button>
+                            </div>
+
+                            {/* Session Memory Activity Badges & Spin Preview Trigger */}
+                            <div className="mt-2.5 pt-2 border-t border-gray-200/60 flex items-center justify-between gap-1.5 text-[10px] font-mono">
+                              <div className="flex items-center gap-1.5 text-gray-500">
+                                <span className="bg-white/80 px-1.5 py-0.5 rounded-md border border-gray-200 font-bold text-gray-700" title="User Prompts">
+                                  💬 {userMsgCount}
+                                </span>
+                                <span className="bg-white/80 px-1.5 py-0.5 rounded-md border border-gray-200 font-bold text-gray-700" title="Tasks Built">
+                                  🛠️ {taskCount}
+                                </span>
+                                <span className="bg-white/80 px-1.5 py-0.5 rounded-md border border-gray-200 font-bold text-gray-700" title="Files Created">
+                                  📁 {fileCount}
+                                </span>
+                              </div>
+
+                              <div className="flex items-center gap-1">
+                                {/* Toggle Session Activities Memory button */}
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setExpandedSessionId(isExpanded ? null : session.id);
+                                  }}
+                                  className={`p-1.5 rounded-lg border transition-all text-[10px] flex items-center gap-1 font-sans ${
+                                    isExpanded 
+                                      ? "bg-amber-100 border-amber-300 text-amber-900 font-bold" 
+                                      : "bg-white hover:bg-gray-100 border-gray-200 text-gray-600"
+                                  }`}
+                                  title="View Session Activities & Memory"
+                                >
+                                  <Activity className="h-3 w-3 text-amber-600" />
+                                  <span>{isExpanded ? "Hide" : "Memory"}</span>
+                                </button>
+
+                                {/* Spin Up Live Preview button */}
+                                <button
+                                  type="button"
+                                  onClick={(e) => handleSpinUpSessionPreview(session, e)}
+                                  className="px-2 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-bold transition-all text-[10px] flex items-center gap-1 shadow-xs cursor-pointer"
+                                  title="Spin up live preview for this session's UI changes"
+                                >
+                                  <Play className="h-2.5 w-2.5 fill-white text-white" />
+                                  <span>Spin UI</span>
+                                </button>
                               </div>
                             </div>
 
-                            {/* Delete action button */}
-                            <button
-                              type="button"
-                              onClick={(e) => handleDeleteSession(session.id, e)}
-                              className="opacity-0 group-hover:opacity-100 p-1 hover:bg-gray-200/60 hover:text-red-500 rounded-md transition-all text-gray-400 shrink-0 ml-1.5"
-                              title="Delete Session"
-                            >
-                              <Trash2 className="h-3 w-3" />
-                            </button>
+                            {/* Expanded Memory & Activities Breakdown */}
+                            <AnimatePresence>
+                              {isExpanded && (
+                                <motion.div
+                                  initial={{ height: 0, opacity: 0 }}
+                                  animate={{ height: "auto", opacity: 1 }}
+                                  exit={{ height: 0, opacity: 0 }}
+                                  className="mt-2.5 pt-2 border-t border-amber-200/60 text-[10px] space-y-2 overflow-hidden"
+                                >
+                                  <p className="font-bold text-gray-800 uppercase tracking-wider font-mono text-[9px] flex items-center gap-1">
+                                    <Sparkles className="h-3 w-3 text-amber-500 animate-pulse" />
+                                    <span>Agent Activities Memory</span>
+                                  </p>
+
+                                  {/* Tasks worked on */}
+                                  {session.tasks && session.tasks.length > 0 && (
+                                    <div className="space-y-1">
+                                      <p className="font-semibold text-gray-600 font-sans">Executed Tasks:</p>
+                                      <div className="space-y-1 max-h-24 overflow-y-auto scrollbar-thin pr-1">
+                                        {session.tasks.map((t: any) => (
+                                          <div key={t.id} className="flex items-start gap-1.5 bg-white/90 p-1.5 rounded-lg border border-gray-150 text-gray-800 font-sans">
+                                            <CheckCircle className={`h-3 w-3 shrink-0 mt-0.5 ${t.status === "completed" ? "text-emerald-500" : "text-amber-500"}`} />
+                                            <div className="min-w-0 flex-1">
+                                              <p className="font-medium truncate leading-tight">{t.name}</p>
+                                              <p className="text-[8px] text-gray-400 font-mono">{t.subtasks?.length || 0} subtasks executed</p>
+                                            </div>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  )}
+
+                                  {/* Files created */}
+                                  {session.files && session.files.length > 0 && (
+                                    <div className="space-y-1">
+                                      <p className="font-semibold text-gray-600 font-sans">Workspace Files Built:</p>
+                                      <div className="flex flex-wrap gap-1">
+                                        {session.files.map((f: any) => (
+                                          <span key={f.path} className="px-1.5 py-0.5 bg-white border border-gray-200 rounded font-mono text-[9px] text-gray-700 truncate max-w-[140px]" title={f.path}>
+                                            📄 {f.path.split('/').pop()}
+                                          </span>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  )}
+                                </motion.div>
+                              )}
+                            </AnimatePresence>
                           </div>
                         );
                       })}

@@ -110,6 +110,33 @@ app.post("/api/session/clear", async (c) => {
   return c.json({ success: true });
 });
 
+// ── Session load (restores messages + tasks + files for a saved session) ──────
+app.post("/api/session/load", async (c) => {
+  await ensureInit(c.env);
+  const body = (await c.req.json<{ messages?: Message[]; tasks?: Task[]; files?: FileNode[] }>().catch(() => ({}))) as { messages?: Message[]; tasks?: Task[]; files?: FileNode[] };
+
+  await Promise.all([clearMessages(), deleteTasks(), clearFiles()]);
+
+  if (body.messages?.length) {
+    for (const msg of body.messages) {
+      await addMessage(msg);
+    }
+  }
+  if (body.tasks?.length) {
+    for (const t of body.tasks) {
+      await saveTask(t);
+    }
+  }
+  if (body.files?.length) {
+    for (const f of body.files) {
+      await saveFile(f);
+    }
+  }
+
+  broadcastSSE("session-loaded", { ts: new Date().toISOString() });
+  return c.json({ success: true });
+});
+
 app.get("/api/sessions", async (c) => {
   if (!c.env.WORKSPACE_REGISTRY) return c.json([]);
   const regId = c.env.WORKSPACE_REGISTRY.idFromName("global");

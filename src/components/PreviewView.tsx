@@ -18,6 +18,7 @@ export default function PreviewView({
 }: PreviewViewProps) {
   const [device, setDevice] = useState<"desktop" | "mobile">("desktop");
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [forceLivePreview, setForceLivePreview] = useState(false);
 
   useEffect(() => {
     if (previewReloadKey > 0) {
@@ -32,8 +33,9 @@ export default function PreviewView({
   const isCalculatorPrompt = currentPrompt.toLowerCase().includes("calc");
   const isNotesPrompt = currentPrompt.toLowerCase().includes("note") || currentPrompt.toLowerCase().includes("journal");
   
-  const activeTask = tasks.find(t => t.status === "running" || t.status === "pending");
-  const isAgentActive = isSending || !!activeTask;
+  const runningTask = tasks.find(t => t.status === "running");
+  const activeTask = runningTask || tasks.find(t => t.status === "pending");
+  const isAgentActive = isSending || !!runningTask;
   
   const handleRefresh = () => {
     setIsRefreshing(true);
@@ -100,24 +102,41 @@ export default function PreviewView({
           </div>
         </div>
 
-        {/* Device Switcher */}
-        <div className="flex items-center gap-1 bg-gray-100 p-1 rounded-xl border border-gray-200">
-          <button
-            id="btn-preview-desktop"
-            onClick={() => setDevice("desktop")}
-            className={`p-1.5 rounded-lg transition-all ${device === "desktop" ? "bg-white text-gray-900 shadow-xs" : "text-gray-400 hover:text-gray-600"}`}
-            title="Desktop Mode"
-          >
-            <Monitor className="h-4 w-4" />
-          </button>
-          <button
-            id="btn-preview-mobile"
-            onClick={() => setDevice("mobile")}
-            className={`p-1.5 rounded-lg transition-all ${device === "mobile" ? "bg-white text-gray-900 shadow-xs" : "text-gray-400 hover:text-gray-600"}`}
-            title="Mobile Mode"
-          >
-            <Smartphone className="h-4 w-4" />
-          </button>
+        {/* Device Switcher & Mode Toggle */}
+        <div className="flex items-center gap-2">
+          {fileCount > 0 && (
+            <button
+              onClick={() => setForceLivePreview(!forceLivePreview)}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
+                forceLivePreview 
+                  ? "bg-amber-500 text-black shadow-sm hover:bg-amber-400" 
+                  : "bg-gray-100 hover:bg-gray-200 text-gray-700 border border-gray-200"
+              }`}
+              title="Toggle between Live App Preview and Compilation Tunnel"
+            >
+              <Eye className="h-3.5 w-3.5" />
+              {forceLivePreview ? "Showing Live Preview" : "Show Live App"}
+            </button>
+          )}
+
+          <div className="flex items-center gap-1 bg-gray-100 p-1 rounded-xl border border-gray-200">
+            <button
+              id="btn-preview-desktop"
+              onClick={() => setDevice("desktop")}
+              className={`p-1.5 rounded-lg transition-all ${device === "desktop" ? "bg-white text-gray-900 shadow-xs" : "text-gray-400 hover:text-gray-600"}`}
+              title="Desktop Mode"
+            >
+              <Monitor className="h-4 w-4" />
+            </button>
+            <button
+              id="btn-preview-mobile"
+              onClick={() => setDevice("mobile")}
+              className={`p-1.5 rounded-lg transition-all ${device === "mobile" ? "bg-white text-gray-900 shadow-xs" : "text-gray-400 hover:text-gray-600"}`}
+              title="Mobile Mode"
+            >
+              <Smartphone className="h-4 w-4" />
+            </button>
+          </div>
         </div>
       </div>
 
@@ -133,8 +152,8 @@ export default function PreviewView({
               <RefreshCw className="h-10 w-10 text-gray-300 animate-spin mb-3" />
               <p className="text-xs font-mono text-gray-500">Hot reloading virtual workspace server state...</p>
             </div>
-          ) : isAgentActive ? (
-            <AgentWorkingPortal activeTask={activeTask} />
+          ) : isAgentActive && !forceLivePreview ? (
+            <AgentWorkingPortal activeTask={activeTask} onToggleLive={() => setForceLivePreview(true)} hasFiles={fileCount > 0} />
           ) : fileCount > 0 ? (
             /* SOVEREIGN DYNAMIC COMPILER - Live rendering of generated source code */
             <LiveIframePreview
@@ -914,7 +933,15 @@ function NotesSimulator() {
   );
 }
 
-function AgentWorkingPortal({ activeTask }: { activeTask: any }) {
+function AgentWorkingPortal({ 
+  activeTask, 
+  onToggleLive, 
+  hasFiles 
+}: { 
+  activeTask: any; 
+  onToggleLive?: () => void; 
+  hasFiles?: boolean; 
+}) {
   const taskName = activeTask?.name || "Synthesizing workspace changes";
   const progress = activeTask?.progress || 35;
   const subtasks = activeTask?.subtasks || [];
@@ -926,9 +953,20 @@ function AgentWorkingPortal({ activeTask }: { activeTask: any }) {
           <Cpu className="h-3.5 w-3.5 animate-pulse text-amber-400" />
           <span>COMPILATION TUNNEL ACTIVE</span>
         </span>
-        <span className="text-[10px] bg-amber-500/10 text-amber-400 border border-amber-500/20 px-2 py-0.5 rounded animate-pulse">
-          STAGE SYNCHRONIZING
-        </span>
+        <div className="flex items-center gap-3">
+          {hasFiles && onToggleLive && (
+            <button
+              onClick={onToggleLive}
+              className="text-[10px] bg-amber-500 hover:bg-amber-400 text-black font-bold px-2.5 py-1 rounded-lg transition-colors flex items-center gap-1 cursor-pointer"
+            >
+              <Eye className="h-3 w-3" />
+              View Live App
+            </button>
+          )}
+          <span className="text-[10px] bg-amber-500/10 text-amber-400 border border-amber-500/20 px-2 py-0.5 rounded animate-pulse">
+            STAGE SYNCHRONIZING
+          </span>
+        </div>
       </div>
 
       <div className="flex-1 p-6 md:p-8 flex flex-col md:grid md:grid-cols-12 gap-8 items-center justify-center overflow-y-auto">

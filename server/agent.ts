@@ -408,7 +408,7 @@ export async function planBuildTasks(userPrompt: string, env?: Partial<AppEnv>, 
    - "Create vite.config.ts with react plugin and server port 5173"
    - "Create index.html with <div id=\\"root\\"> and script type=module pointing to src/main.tsx"
    - "Create src/main.tsx with ReactDOM.createRoot mounting App component"
-   - "Create src/index.css with Tailwind @tailwind base/components/utilities directives"
+   - "Create src/index.css with Tailwind @import \"tailwindcss\"; directive"
    After that bootstrap task, implement the actual feature in a second task.`
       : "";
 
@@ -564,7 +564,7 @@ function synthesizeCodeLocally(
 
   // 1. If it's a CSS file
   if (targetPath.endsWith(".css")) {
-    return `@tailwind base;\n@tailwind components;\n@tailwind utilities;\n\nbody {\n  margin: 0;\n  background-color: #000000;\n  color: #ffffff;\n  font-family: system-ui, -apple-system, sans-serif;\n}\n`;
+    return `@import "tailwindcss";\n\nbody {\n  margin: 0;\n  background-color: #000000;\n  color: #ffffff;\n  font-family: system-ui, -apple-system, sans-serif;\n}\n`;
   }
 
   // 2. If it's a text file

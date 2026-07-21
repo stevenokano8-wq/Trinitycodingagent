@@ -290,6 +290,29 @@ app.post("/api/ai-gateway/run", async (c) => {
 });
 
 // ── Agent build (SSE + trigger) ───────────────────────────────────────────────
+app.post("/api/messages", async (c) => {
+  await ensureInit(c.env);
+  const msgBody = await c.req.json<{ role?: string; content?: string; prompt?: string; attachment?: any }>().catch(() => ({} as any));
+  const userText = msgBody.content || msgBody.prompt || "";
+
+  if (!userText.trim()) {
+    return c.json({ error: "Empty prompt" }, 400);
+  }
+
+  const userMsg: Message = {
+    id: `msg-${Date.now()}-user`,
+    role: "user",
+    content: userText,
+    timestamp: new Date().toISOString(),
+    attachment: msgBody.attachment,
+  };
+  await addMessage(userMsg);
+  broadcastSSE("message-added", userMsg);
+
+  executeAgentBuild(userText, [], c.env, msgBody.attachment).catch(console.error);
+  return c.json({ status: "started", messageId: userMsg.id });
+});
+
 app.post("/api/build", async (c) => {
   await ensureInit(c.env);
   const buildBody = await c.req.json<{ prompt: string; attachment?: any }>().catch(() => ({ prompt: "", attachment: undefined })) as { prompt: string; attachment?: any };

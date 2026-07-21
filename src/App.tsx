@@ -364,6 +364,7 @@ export default function App() {
   const [currentTime, setCurrentTime] = useState("");
 
   const chatEndRef = useRef<HTMLDivElement>(null);
+  const chatScrollContainerRef = useRef<HTMLDivElement>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
   const sseTimeoutRef = useRef<any>(null);
 
@@ -599,9 +600,17 @@ export default function App() {
     };
   }, []);
 
-  // Auto-scroll chat on new message or task activity
+  // Smart auto-scroll chat: only auto-scroll if user is already near bottom
   useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    const container = chatScrollContainerRef.current;
+    if (container) {
+      const distanceToBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
+      if (distanceToBottom < 180) {
+        chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+      }
+    } else {
+      chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
   }, [messages, tasks]);
 
   // Polling fallback: when a build is active, poll files + tasks every 5 s so
@@ -733,7 +742,22 @@ export default function App() {
                 setMessages(prev => {
                   const existingIds = new Set(prev.map((m: any) => m.id));
                   const newMsgs = msgs.filter((m: any) => !existingIds.has(m.id));
-                  return newMsgs.length > 0 ? [...prev, ...newMsgs] : prev;
+                  if (newMsgs.length === 0) return prev;
+
+                  let next = [...prev];
+                  for (const m of newMsgs) {
+                    if (m.role === "user") {
+                      const optimIdx = next.findIndex(p => p.id.startsWith("msg-optim-") && p.content === m.content);
+                      if (optimIdx >= 0) {
+                        next[optimIdx] = m;
+                        continue;
+                      }
+                    }
+                    if (!next.some(p => p.id === m.id)) {
+                      next.push(m);
+                    }
+                  }
+                  return next;
                 });
               }
             }
@@ -916,6 +940,14 @@ export default function App() {
       const msg = JSON.parse(e.data) as Message;
       setMessages(prev => {
         if (prev.some(m => m.id === msg.id)) return prev;
+        if (msg.role === "user") {
+          const optimIdx = prev.findIndex(m => m.id.startsWith("msg-optim-") && m.content === msg.content);
+          if (optimIdx >= 0) {
+            const next = [...prev];
+            next[optimIdx] = msg;
+            return next;
+          }
+        }
         return [...prev, msg];
       });
     });
@@ -982,6 +1014,7 @@ export default function App() {
       attachment: currentAttachment || undefined
     };
     setMessages(prev => [...prev, optimMsg]);
+    setTimeout(() => chatEndRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
 
     try {
       const res = await fetch(`${API_BASE}/api/messages`, {
@@ -1538,7 +1571,7 @@ export default function App() {
                   </div>
 
                   {/* Unified Feed Scroll Area */}
-                  <div className="flex-1 min-h-0 overflow-y-auto space-y-6 pr-1.5 scrollbar-thin pb-4">
+                  <div ref={chatScrollContainerRef} className="flex-1 min-h-0 overflow-y-auto space-y-6 pr-1.5 scrollbar-thin pb-4">
                     {timeline.map((item, index) => {
                       if (item.type === "message") {
                         const msg = item.data;

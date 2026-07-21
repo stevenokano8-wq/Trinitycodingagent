@@ -604,7 +604,7 @@ export default function App() {
   // Polling fallback: when a build is active, poll files + tasks every 5 s so
   // the Code view stays in sync even if SSE misses a broadcast (isolate split).
   useEffect(() => {
-    const hasActiveBuild = tasks.some(t => t.status === "running");
+    const hasActiveBuild = tasks.some(t => t.status === "running" || t.status === "pending");
     if (!hasActiveBuild) return;
     const pollInterval = setInterval(async () => {
       try {
@@ -634,7 +634,7 @@ export default function App() {
       } catch (_) {}
     }, 2000); // Reduced from 5s → 2s so the accordion updates faster during active builds
     return () => clearInterval(pollInterval);
-  }, [tasks.some(t => t.status === "running")]);
+  }, [tasks.some(t => t.status === "running" || t.status === "pending")]);
 
   const fetchInitialData = async (opts?: { serverOnly?: boolean }) => {
     try {
@@ -665,7 +665,13 @@ export default function App() {
                 setTasks(match.tasks || []);
                 setFiles(match.files || []);
                 setCurrentPrompt(match.currentPrompt || "");
-                return; // Local data is fresher — skip server fetch
+
+                // If there are any pending or running tasks, do NOT skip the server fetch;
+                // fall through to sync the active/pending states with D1 immediately.
+                const hasPendingOrRunning = (match.tasks || []).some((t: any) => t.status === "pending" || t.status === "running");
+                if (!hasPendingOrRunning) {
+                  return; // Local data is complete and finalized — skip server fetch
+                }
               }
             }
             // Either no match (fresh session ID generated on new day) or session is
@@ -709,7 +715,7 @@ export default function App() {
   // Cloudflare Worker spins up a new isolate for the build execution.
   const pollingRef = React.useRef<ReturnType<typeof setInterval> | null>(null);
   useEffect(() => {
-    const isRunning = tasks.some(t => t.status === "running") || isSending;
+    const isRunning = tasks.some(t => t.status === "running" || t.status === "pending") || isSending;
     if (isRunning) {
       if (!pollingRef.current) {
         pollingRef.current = setInterval(async () => {

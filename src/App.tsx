@@ -462,29 +462,32 @@ export default function App() {
   // Kill all running tasks immediately — fires cancel-all API then marks tasks
   // as failed locally so the UI reacts without waiting for the next SSE event.
   const handleKillAll = async () => {
-    try {
-      await fetch(`${API_BASE}/api/tasks/cancel-all`, { method: "POST" });
-    } catch (err) {
-      console.error("Failed to cancel all tasks:", err);
-    }
     setThinkingState(null);
     setIsSending(false);
     setTasks(prev =>
       prev.map(t =>
-        t.status === "running"
+        t.status === "running" || t.status === "pending"
           ? {
               ...t,
               status: "failed" as const,
               completedAt: new Date().toISOString(),
               subtasks: t.subtasks.map(s =>
-                s.status === "running"
-                  ? { ...s, status: "failed" as const, logs: [...s.logs, "⛔ Cancelled by user."] }
+                s.status === "running" || s.status === "pending"
+                  ? { ...s, status: "failed" as const, logs: [...(s.logs || []), "⛔ Cancelled by user signal."] }
                   : s
               ),
             }
           : t
       )
     );
+    try {
+      await Promise.all([
+        fetch(`${API_BASE}/api/tasks/cancel-all`, { method: "POST" }),
+        fetch(`${API_BASE}/api/build/cancel`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) })
+      ]);
+    } catch (err) {
+      console.error("Failed to cancel all tasks:", err);
+    }
   };
 
   const handleClearAllHistory = () => {
@@ -920,11 +923,34 @@ export default function App() {
     eventSource.addEventListener("build-finished", (e: any) => {
       const finishMsg = JSON.parse(e.data) as Message;
       setThinkingState(null);
+      setIsSending(false);
       setMessages(prev => {
         if (prev.some(m => m.id === finishMsg.id)) return prev;
         return [...prev, finishMsg];
       });
       // Sync complete task tree
+      fetchInitialData();
+    });
+
+    eventSource.addEventListener("build-cancelled", () => {
+      setThinkingState(null);
+      setIsSending(false);
+      setTasks(prev =>
+        prev.map(t =>
+          t.status === "running" || t.status === "pending"
+            ? {
+                ...t,
+                status: "failed" as const,
+                completedAt: new Date().toISOString(),
+                subtasks: t.subtasks.map(s =>
+                  s.status === "running" || s.status === "pending"
+                    ? { ...s, status: "failed" as const, logs: [...(s.logs || []), "⛔ Cancelled by user signal."] }
+                    : s
+                ),
+              }
+            : t
+        )
+      );
       fetchInitialData();
     });
 

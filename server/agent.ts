@@ -150,9 +150,108 @@ export function safeParseJSON(rawText: string): any {
 }
 
 export let activeCancellationSignal = { aborted: false, taskId: "" };
-export function cancelActiveBuild(taskId: string) {
-  activeCancellationSignal.aborted = true;
-  activeCancellationSignal.taskId = taskId;
+
+export async function cancelActiveBuild(taskId?: string) {
+  activeCancellationSignal = { aborted: true, taskId: taskId || "" };
+  
+  try {
+    const tasks = await getTasks();
+    for (const task of tasks) {
+      if (task.status === "running" || task.status === "pending") {
+        task.status = "failed";
+        task.completedAt = new Date().toISOString();
+        for (const sub of task.subtasks) {
+          if (sub.status === "running" || sub.status === "pending") {
+            sub.status = "failed";
+            sub.completedAt = new Date().toISOString();
+            sub.logs = sub.logs || [];
+            sub.logs.push("⛔ Cancelled by user signal.");
+          }
+        }
+        await saveTask(task);
+        broadcastSSE("task-update", task);
+      }
+    }
+    broadcastSSE("build-cancelled", { taskId: taskId || "all" });
+  } catch (err) {
+    console.error("Failed during cancelActiveBuild cleanup:", err);
+  }
+}
+
+/**
+ * Generates or updates .env.example with empty boxes (e.g. KEY=)
+ * according to user prompt request, source URLs, and API key references.
+ */
+export async function syncEnvExampleFile(prompt: string, currentFiles: FileNode[]) {
+  const defaultKeys = [
+    "GEMINI_API_KEY",
+    "GITHUB_TOKEN",
+    "GITHUB_REPO_URL",
+    "DATABASE_URL",
+    "SUPABASE_URL",
+    "SUPABASE_ANON_KEY",
+  ];
+
+  const detected = new Set<string>(defaultKeys);
+
+  // Scan prompt for explicit env variable patterns or service keywords
+  const envVarMatches = prompt.match(/[A-Z0-9_]{3,}_(?:KEY|URL|TOKEN|SECRET|ID|API|CONFIG)/g) || [];
+  envVarMatches.forEach(varName => detected.add(varName));
+
+  if (/supabase/i.test(prompt)) {
+    detected.add("SUPABASE_URL");
+    detected.add("SUPABASE_ANON_KEY");
+  }
+  if (/stripe/i.test(prompt)) {
+    detected.add("STRIPE_SECRET_KEY");
+    detected.add("STRIPE_PUBLISHABLE_KEY");
+  }
+  if (/openai/i.test(prompt)) {
+    detected.add("OPENAI_API_KEY");
+  }
+  if (/firebase/i.test(prompt)) {
+    detected.add("FIREBASE_API_KEY");
+    detected.add("FIREBASE_AUTH_DOMAIN");
+    detected.add("FIREBASE_PROJECT_ID");
+  }
+
+  // Scan workspace files for process.env.VAR_NAME or import.meta.env.VITE_VAR_NAME
+  for (const f of currentFiles) {
+    const fileEnvMatches = f.content.match(/(?:process\.env|import\.meta\.env)\.([A-Z0-9_]+)/g) || [];
+    for (const match of fileEnvMatches) {
+      const varName = match.replace(/^(process\.env|import\.meta\.env)\./, "");
+      if (varName && varName !== "NODE_ENV" && varName !== "PORT") {
+        detected.add(varName);
+      }
+    }
+  }
+
+  const envLines: string[] = [
+    "# Workspace Environment Variable Declarations",
+    "# Auto-generated empty boxes according to source URL & API key specifications",
+    ""
+  ];
+
+  for (const key of Array.from(detected).sort()) {
+    envLines.push(`${key}=`);
+  }
+  envLines.push("");
+
+  const newEnvContent = envLines.join("\n");
+  const existingEnv = currentFiles.find(f => f.path === ".env.example");
+
+  if (!existingEnv || existingEnv.content !== newEnvContent) {
+    const envFileNode: FileNode = {
+      path: ".env.example",
+      content: newEnvContent,
+      language: "properties"
+    };
+    await saveFile(envFileNode);
+    try {
+      fs.writeFileSync(".env.example", newEnvContent, "utf8");
+    } catch (_) {}
+    broadcastSSE("file-created", envFileNode);
+  }
 }
 
 /**
@@ -610,12 +709,15 @@ export async function executeAgentBuild(prompt: string, tasks: Task[], env?: Par
     broadcastSSE("message-added", initialMsg);
     broadcastSSE("build-started", { prompt, totalTasks: tasks.length });
 
+    // Sync .env.example with empty boxes based on source URL and API key requests
+    await syncEnvExampleFile(prompt, await getFiles());
+
     for (let tIdx = 0; tIdx < tasks.length; tIdx++) {
       const task = tasks[tIdx];
       if (activeCancellationSignal.aborted) {
         task.status = "failed";
         await saveTask(task);
-        continue;
+        break;
       }
 
       task.status = "running";
@@ -627,8 +729,11 @@ export async function executeAgentBuild(prompt: string, tasks: Task[], env?: Par
         const sub = task.subtasks[sIdx];
         if (activeCancellationSignal.aborted) {
           sub.status = "failed";
+          sub.completedAt = new Date().toISOString();
+          sub.logs = sub.logs || [];
+          sub.logs.push("⛔ Subtask execution cancelled by user.");
           await saveTask(task);
-          continue;
+          break;
         }
 
         task.activeSubtaskIndex = sIdx;

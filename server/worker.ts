@@ -311,7 +311,18 @@ app.post("/api/build", async (c) => {
 
 app.post("/api/build/cancel", async (c) => {
   const { taskId = "" } = (await c.req.json().catch(() => ({}))) as { taskId?: string };
-  cancelActiveBuild(taskId);
+  await cancelActiveBuild(taskId);
+  return c.json({ status: "cancelled" });
+});
+
+app.post("/api/tasks/cancel", async (c) => {
+  const { taskId = "" } = (await c.req.json().catch(() => ({}))) as { taskId?: string };
+  await cancelActiveBuild(taskId);
+  return c.json({ status: "cancelled" });
+});
+
+app.post("/api/tasks/cancel-all", async (c) => {
+  await cancelActiveBuild();
   return c.json({ status: "cancelled" });
 });
 

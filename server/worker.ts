@@ -12,7 +12,8 @@ import {
   initDb, getMessages, addMessage, clearMessages,
   getTasks, saveTask, deleteTasks, getFiles, clearFiles, saveFile,
 } from "./db.js";
-import { initCache } from "./cache.js";
+import { initCache, cacheFlush } from "./cache.js";
+import { getLogDrops, clearLogDrops } from "./logger.js";
 import {
   planBuildTasks, executeAgentBuild, sseClients, broadcastSSE, cancelActiveBuild,
 } from "./agent.js";
@@ -326,6 +327,21 @@ app.post("/api/tasks/cancel-all", async (c) => {
   return c.json({ status: "cancelled" });
 });
 
+app.get("/api/logs", async (c) => {
+  const logs = getLogDrops();
+  return c.json({ count: logs.length, logs });
+});
+
+app.post("/api/logs/clear", async (c) => {
+  clearLogDrops();
+  return c.json({ status: "cleared" });
+});
+
+app.post("/api/cache/clear", async (c) => {
+  await cacheFlush();
+  return c.json({ status: "cleared" });
+});
+
 app.get("/api/build/stream", async (c) => {
   const { readable, writable } = new TransformStream();
   const writer = writable.getWriter();
@@ -537,6 +553,3 @@ export default {
     }
   },
 };
-
-// ── Cache flush helper (used by cache.ts) ─────────────────────────────────────
-import { cacheFlush } from "./cache.js";

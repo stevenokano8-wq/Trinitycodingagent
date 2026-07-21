@@ -1,10 +1,11 @@
 import { GoogleGenAI } from "@google/genai";
 import { Task, Subtask, FileNode, Message } from "../src/types.js"; // Match local file extension rules (.ts/.js)
-import { saveTask, saveFile, addMessage, getFiles, getMessages } from "./db.js";
+import { saveTask, saveFile, addMessage, getFiles, getMessages, getTasks } from "./db.js";
 import { executeGitPush } from "./github.js";
 import { AppEnv, AiBinding, AiChatMessage, extractCfAiText, resolveEnvWithOverrides } from "./env.js";
 import { routeLLMTask } from "./llmRouter.js";
 import { executeTerminalCommand, isCommandSafe } from "./command.js";
+import { appendLogDrop } from "./logger.js";
 import fs from "fs";
 import path from "path";
 
@@ -1022,7 +1023,7 @@ CRITICAL PATH RULES:
           const fileNode: FileNode = { path: targetPath, content: code, language };
           await saveFile(fileNode);
 
-          // Write to physical disk
+          // Write to physical disk if writable, else rely on virtual D1/KV storage
           try {
             const dir = path.dirname(targetPath);
             if (!fs.existsSync(dir)) {
@@ -1030,8 +1031,10 @@ CRITICAL PATH RULES:
             }
             fs.writeFileSync(targetPath, code, "utf8");
             sub.logs.push(`[SUCCESS] Wrote file to workspace: ${targetPath}`);
-          } catch (writeErr: any) {
-            sub.logs.push(`[WARN] Physical write failed: ${writeErr.message}`);
+            appendLogDrop("info", "workspace", `Wrote file ${targetPath}`);
+          } catch (_) {
+            sub.logs.push(`[INFO] Virtual D1/KV workspace stored: ${targetPath}`);
+            appendLogDrop("info", "workspace", `Virtual D1/KV stored ${targetPath}`);
           }
 
           broadcastSSE("file-created", fileNode);

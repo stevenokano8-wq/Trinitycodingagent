@@ -82,12 +82,18 @@ function parseLogsToCommandBlocks(logs: string[]): CommandBlock[] {
 
     if (currentBlock) {
       const allText = (currentBlock.command + " " + currentBlock.output.join(" ")).toLowerCase();
-      if (allText.includes("failed") || allText.includes("error") || allText.includes("cancelled")) {
+      
+      const hasExplicitSuccess = allText.includes("[done]") || allText.includes("✅") || allText.includes("[success]") || allText.includes("compiled and wrote");
+      const hasFatalError = (allText.includes("[error]") || allText.includes("⛔") || allText.includes("cmd error") || allText.includes("fatal:")) && !hasExplicitSuccess;
+
+      if (hasFatalError) {
         currentBlock.status = "failed";
-      } else if (allText.includes("success") || allText.includes("passed") || allText.includes("complete") || allText.includes("completed")) {
+      } else if (hasExplicitSuccess || allText.includes("success") || allText.includes("completed")) {
         currentBlock.status = "success";
-      } else if (allText.includes("running") || allText.includes("loading") || allText.includes("executing")) {
+      } else if (allText.includes("starting execution") || allText.includes("installing...") || allText.includes("running")) {
         currentBlock.status = "running";
+      } else {
+        currentBlock.status = "info";
       }
     }
   });

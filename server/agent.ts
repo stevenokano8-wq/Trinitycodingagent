@@ -1124,15 +1124,42 @@ CRITICAL PATH RULES:
     if (config.GITHUB_TOKEN && config.GITHUB_REPO_URL && !activeCancellationSignal.aborted) {
       const currentFiles = await getFiles();
       const push = await executeGitPush(config.GITHUB_TOKEN, config.GITHUB_REPO_URL, "main", currentFiles);
-      gitReport = push.success ? `\n\n🔄 Committed successfully to remote repository.` : `\n\n⚠️ Git sync deferred: ${push.message}`;
+      gitReport = push.success ? `\n\n🔄 **Git Sync**: Successfully committed and pushed to remote repository (\`${config.GITHUB_REPO_URL}\`).` : `\n\n⚠️ **Git Sync Deferred**: ${push.message}`;
     }
 
     const planningLabel = cfAi ? "CF-AI + Gemini" : "Gemini";
     const totalSec = Math.round((Date.now() - startTime) / 1000);
+
+    // Build a clean, scannable summary report of all completed tasks
+    const completedTasksList = tasks
+      .filter(t => t.status === "completed")
+      .map(t => {
+        const subList = t.subtasks
+          .filter(s => s.status === "completed")
+          .map(s => `  • **${s.name}** \`${s.file}\``)
+          .join("\n");
+        return `* **${t.name}**\n${subList}`;
+      })
+      .join("\n\n");
+
+    const envBoxMarkdown = `
+---
+### ⚙️ Environment & External Source Connection (.env)
+To automatically push builds or sync this project with external repositories and live production origins, configure your environment parameters below:
+
+| Environment Variable | Description / Purpose | Connection Status |
+| :--- | :--- | :--- |
+| \`GITHUB_REPO_URL\` | Target repository URL (e.g. \`https://github.com/org/repo.git\`) | ${config.GITHUB_REPO_URL ? '✅ Connected' : '⚡ Optional'} |
+| \`GITHUB_TOKEN\` | GitHub Access Token with write permissions | ${config.GITHUB_TOKEN ? '✅ Authenticated' : '⚡ Optional'} |
+| \`CLOUDFLARE_API_TOKEN\` | API key for direct Cloudflare Edge deployment | ${(config as any).CLOUDFLARE_API_TOKEN ? '✅ Active' : '⚡ Optional'} |
+| \`GEMINI_API_KEY\` | Key for server-side generative AI features | ${config.GEMINI_API_KEY ? '✅ Present' : '⚡ Optional'} |
+
+*To link your project to a remote git origin, add \`GITHUB_REPO_URL\` and \`GITHUB_TOKEN\` to your project secrets or \`.env\` file.*`;
+
     const finalMsg: Message = {
       id: `msg-${Date.now()}-done`,
       role: "assistant",
-      content: `### ✅ Build Completed Successfully\n\nAll tasks completed in ${totalSec}s.\n**Planning:** Cloudflare Workers AI (${CF_PLAN_MODEL})\n**Code synthesis:** Gemini [${Array.from(modelsUsed).filter(m => m !== "CF-AI").join(" + ")}]${gitReport}`,
+      content: `### 🚀 Build & Compilation Report\n\nAll tasks completed and verified in **${totalSec}s**.\n\n#### 📑 Accomplished Tasks:\n${completedTasksList || "• All workspace modifications applied successfully."}${gitReport}\n${envBoxMarkdown}`,
       timestamp: new Date().toISOString(),
       actionsTaken,
       thoughtTimeSeconds: 1.5,

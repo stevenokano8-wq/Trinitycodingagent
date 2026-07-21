@@ -1384,11 +1384,11 @@ export default function App() {
               initial={{ opacity: 0, y: 15 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -15 }}
-              className="flex-1 flex flex-col min-h-0"
+              className="flex-1 flex flex-col min-h-0 h-full overflow-hidden"
             >
               {/* If no user commands yet, show pristine central Welcome greeting exactly matching screenshot! */}
               {tasks.length === 0 && messages.filter(m => m.id !== "welcome-msg").length === 0 ? (
-                <div id="central-welcome-greeting" className="flex-grow flex flex-col items-center justify-center text-center py-10 max-w-2xl mx-auto w-full space-y-8 px-4 sm:px-0">
+                <div id="central-welcome-greeting" className="flex-1 flex flex-col items-center justify-center text-center py-6 max-w-2xl mx-auto w-full space-y-8 px-4 sm:px-0 overflow-y-auto scrollbar-thin">
                   <motion.div
                     initial={{ opacity: 0, scale: 0.95 }}
                     animate={{ opacity: 1, scale: 1 }}
@@ -1514,7 +1514,7 @@ export default function App() {
                 </div>
               ) : (
                 /* Else, render the unified chronological chat and task feed! */
-                <div id="chat-thread-container" className="flex-1 flex flex-col min-h-0 max-w-4xl mx-auto w-full relative pb-4">
+                <div id="chat-thread-container" className="flex-1 flex flex-col min-h-0 h-full overflow-hidden max-w-4xl mx-auto w-full relative pb-1">
                   {/* Stream Feed Header info */}
                   <div className="flex items-center justify-between pb-3 mb-3 border-b border-gray-150/70 shrink-0">
                     <div className="flex items-center gap-2">
@@ -1538,7 +1538,7 @@ export default function App() {
                   </div>
 
                   {/* Unified Feed Scroll Area */}
-                  <div className="flex-1 overflow-y-auto space-y-6 pr-1.5 scrollbar-thin pb-4">
+                  <div className="flex-1 min-h-0 overflow-y-auto space-y-6 pr-1.5 scrollbar-thin pb-4">
                     {timeline.map((item, index) => {
                       if (item.type === "message") {
                         const msg = item.data;

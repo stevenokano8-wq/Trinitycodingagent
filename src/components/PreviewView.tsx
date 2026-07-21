@@ -68,9 +68,9 @@ export default function PreviewView({
   }
 
   return (
-    <div id="preview-workspace" className="flex flex-col flex-1 border border-gray-100 rounded-3xl bg-gray-50 overflow-hidden shadow-xs h-full min-h-[500px]">
+    <div id="preview-workspace" className="flex flex-col flex-1 border border-gray-100 rounded-3xl bg-gray-50 overflow-hidden shadow-xs h-full min-h-0">
       {/* Mock Browser Header Bar */}
-      <div className="bg-white px-5 py-3 border-b border-gray-100 flex items-center justify-between">
+      <div className="bg-white px-5 py-3 border-b border-gray-100 flex items-center justify-between shrink-0">
         <div className="flex items-center gap-4">
           {/* Navigation Dots */}
           <div className="flex gap-1.5">
@@ -141,11 +141,11 @@ export default function PreviewView({
       </div>
 
       {/* Simulator Active Area */}
-      <div className="flex-1 p-6 flex items-center justify-center overflow-y-auto">
+      <div className="flex-1 p-3 sm:p-4 flex items-center justify-center overflow-hidden min-h-0 h-full">
         <div 
-          className={`bg-white rounded-2xl border border-gray-200 shadow-lg overflow-hidden transition-all duration-500 ${
-            device === "mobile" ? "w-[375px] h-[667px]" : "w-full max-w-5xl h-[520px]"
-          } flex flex-col`}
+          className={`bg-white rounded-2xl border border-gray-200 shadow-lg overflow-hidden transition-all duration-300 ${
+            device === "mobile" ? "w-[375px] h-[667px] max-h-full shrink-0" : "w-full max-w-5xl h-full max-h-full"
+          } flex flex-col min-h-0`}
         >
           {isRefreshing ? (
             <div className="flex-1 flex flex-col items-center justify-center text-center bg-gray-50">

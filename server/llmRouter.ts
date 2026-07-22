@@ -9,7 +9,7 @@ export interface RoutingResult {
 
 /**
  * Analyzes the complexity of a user prompt or subtask name
- * and selects either "gemini-2.5-flash" (Flash) or "gemini-2.5-pro" (Pro).
+ * and selects either "gemini-3.6-flash" (Flash) or "gemini-3.1-pro-preview" (Pro).
  */
 export function routeLLMTask(
   prompt: string,
@@ -23,7 +23,7 @@ export function routeLLMTask(
     return {
       complexity: "complex",
       score: 10,
-      model: "gemini-2.5-pro",
+      model: "gemini-3.1-pro-preview",
       reason: "Explicit user override requested the 'Pro' model."
     };
   }
@@ -31,7 +31,7 @@ export function routeLLMTask(
     return {
       complexity: "simple",
       score: 0,
-      model: "gemini-2.5-flash",
+      model: "gemini-3.6-flash",
       reason: "Explicit user override requested the 'Flash' model."
     };
   }

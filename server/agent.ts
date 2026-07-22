@@ -89,7 +89,7 @@ async function runPlanningPrompt(
     throw new Error("No AI inference binding (Cloudflare AI or Gemini client) was initialized. Set GEMINI_API_KEY or bind Cloudflare AI.");
   }
   const response = await ai.models.generateContent({
-    model: "gemini-2.5-flash",
+    model: "gemini-3.6-flash",
     contents: userContent,
     config: { systemInstruction: systemPrompt, responseMimeType: "application/json" }
   });
@@ -558,62 +558,6 @@ async function validateGeneratedFile(filePath: string, sub: Subtask, task: Task)
 }
 
 /**
- * Extract background styling (Tailwind classes or inline style) from a user prompt.
- */
-function extractPromptTheme(prompt: string): { bgClass: string; textClass: string; inlineStyle?: string } {
-  const p = prompt.toLowerCase();
-  
-  // Check for hex colors e.g. #ff0000 or #1e293b
-  const hexMatch = prompt.match(/#(?:[0-9a-fA-F]{3}){1,2}\b/);
-  if (hexMatch) {
-    return { bgClass: "", textClass: "text-white", inlineStyle: `backgroundColor: "${hexMatch[0]}"` };
-  }
-
-  if (p.includes("gradient")) {
-    return { bgClass: "bg-gradient-to-br from-blue-600 via-indigo-600 to-purple-700", textClass: "text-white" };
-  }
-  if (p.includes("blue") || p.includes("navy") || p.includes("azure")) {
-    return { bgClass: "bg-blue-600", textClass: "text-white" };
-  }
-  if (p.includes("red") || p.includes("crimson") || p.includes("scarlet")) {
-    return { bgClass: "bg-red-600", textClass: "text-white" };
-  }
-  if (p.includes("green") || p.includes("emerald") || p.includes("mint")) {
-    return { bgClass: "bg-emerald-600", textClass: "text-white" };
-  }
-  if (p.includes("purple") || p.includes("violet") || p.includes("magenta")) {
-    return { bgClass: "bg-purple-700", textClass: "text-white" };
-  }
-  if (p.includes("yellow") || p.includes("gold") || p.includes("amber")) {
-    return { bgClass: "bg-amber-400", textClass: "text-slate-900" };
-  }
-  if (p.includes("pink") || p.includes("rose")) {
-    return { bgClass: "bg-pink-500", textClass: "text-white" };
-  }
-  if (p.includes("orange")) {
-    return { bgClass: "bg-orange-500", textClass: "text-white" };
-  }
-  if (p.includes("white") || p.includes("light")) {
-    return { bgClass: "bg-white", textClass: "text-slate-900" };
-  }
-  if (p.includes("cyan") || p.includes("sky")) {
-    return { bgClass: "bg-sky-500", textClass: "text-white" };
-  }
-  if (p.includes("teal")) {
-    return { bgClass: "bg-teal-600", textClass: "text-white" };
-  }
-  if (p.includes("indigo")) {
-    return { bgClass: "bg-indigo-600", textClass: "text-white" };
-  }
-  if (p.includes("gray") || p.includes("slate") || p.includes("zinc") || p.includes("dark")) {
-    return { bgClass: "bg-slate-900", textClass: "text-slate-100" };
-  }
-
-  // Default clean dark canvas
-  return { bgClass: "bg-slate-950", textClass: "text-slate-100" };
-}
-
-/**
  * Smart local code synthesis fallback when AI engines are offline or unconfigured.
  */
 function synthesizeCodeLocally(
@@ -625,14 +569,10 @@ function synthesizeCodeLocally(
   const normalizedPrompt = prompt.toLowerCase();
   const existingFile = currentFiles.find(f => f.path === targetPath);
   const baseContent = existingFile ? existingFile.content : "";
-  const theme = extractPromptTheme(prompt);
 
   // 1. If it's a CSS file
   if (targetPath.endsWith(".css")) {
-    const bgCss = theme.inlineStyle 
-      ? `body { margin: 0; ${theme.inlineStyle}; color: #ffffff; font-family: system-ui, sans-serif; }`
-      : `@import "tailwindcss";\n\nbody {\n  margin: 0;\n  font-family: system-ui, -apple-system, sans-serif;\n}\n`;
-    return bgCss;
+    return `@import "tailwindcss";\n\nbody {\n  margin: 0;\n  background-color: #000000;\n  color: #ffffff;\n  font-family: system-ui, -apple-system, sans-serif;\n}\n`;
   }
 
   // 2. If it's a text file
@@ -646,42 +586,23 @@ function synthesizeCodeLocally(
 
   // 3. If it's JSON
   if (targetPath.endsWith(".json")) {
-    return JSON.stringify({ status: "success", message: `Workspace file created for: ${prompt}` }, null, 2);
+    return JSON.stringify({ status: "success", message: `Simulated fallback for: ${prompt}` }, null, 2);
   }
 
   // 4. If it's a typescript/javascript/tsx file
   if (targetPath.endsWith(".ts") || targetPath.endsWith(".tsx") || targetPath.endsWith(".js") || targetPath.endsWith(".jsx")) {
-    if (baseContent && !baseContent.includes("bg-black")) {
-      return `${baseContent}\n\n// Agent Step Completed: "${subtaskName}"\n`;
+    if (baseContent) {
+      return `${baseContent}\n\n// Agent Fallback: Completed subtask "${subtaskName}" for prompt "${prompt}"\n`;
     }
     
     if (targetPath.endsWith(".tsx")) {
       const componentName = path.basename(targetPath, path.extname(targetPath))
         .replace(/[^a-zA-Z0-9]/g, "")
         .replace(/^[a-z]/, (c) => c.toUpperCase());
-      
-      const styleAttr = theme.inlineStyle ? ` style={{ ${theme.inlineStyle} }}` : "";
-      const bgClass = theme.bgClass || "";
-
-      return `import React from "react";
-
-export default function ${componentName || "App"}() {
-  return (
-    <div className="min-h-screen ${bgClass} ${theme.textClass} p-8 flex flex-col items-center justify-center font-sans transition-colors duration-300"${styleAttr}>
-      <div className="max-w-md w-full bg-white/10 backdrop-blur-md rounded-2xl p-6 border border-white/20 shadow-xl text-center">
-        <h1 className="text-3xl font-bold mb-3 tracking-tight">${componentName || "App"}</h1>
-        <p className="text-sm opacity-90 mb-4 font-medium">React + Vite Application</p>
-        <div className="inline-block px-4 py-2 bg-white/20 rounded-lg text-xs font-mono tracking-wide">
-          ${prompt}
-        </div>
-      </div>
-    </div>
-  );
-}
-`;
+      return `import React from "react";\n\nexport default function ${componentName || "App"}() {\n  return (\n    <div className="min-h-screen bg-black text-white p-8 flex flex-col items-center justify-center font-sans">\n      <h1 className="text-3xl font-bold mb-4">React + Vite Workspace</h1>\n      <p className="text-stone-400">Created for: ${prompt}</p>\n    </div>\n  );\n}\n`;
     }
     
-    return `// File: ${targetPath}\n// Prompt: ${prompt}\nexport const status = "success";\n`;
+    return `// Fallback file: ${targetPath}\n// Prompt: ${prompt}\nexport const status = "success";\n`;
   }
 
   return `File created for request: ${prompt}\nSubtask: ${subtaskName}\n`;
@@ -749,7 +670,7 @@ ${workspaceContext}`;
   }
 
   // Fallback to Gemini or Smart Local Synthesis
-  if (!ai || typeof (ai as any).models?.generateContent !== "function") {
+  if (!ai || typeof (ai as any).run === "function") {
     console.warn("[generateSubtaskCode] No Gemini AI inference engine available. Executing smart local synthesis...");
     return synthesizeCodeLocally(prompt, subtaskName, targetPath, currentFiles);
   }
@@ -860,7 +781,7 @@ export async function executeAgentBuild(prompt: string, tasks: Task[], env?: Par
               const ai = getGeminiClient(env);
               if (ai) {
                 const cmdResponse = await ai.models.generateContent({
-                  model: "gemini-2.5-flash",
+                  model: "gemini-3.6-flash",
                   contents: `${cmdSystemPrompt}\n\n${cmdUserContent}`,
                 });
                 command = (cmdResponse.text || "echo 'No command needed'").trim().replace(/^```[\w]*\n?/, "").replace(/\n?```$/, "").trim();
@@ -944,7 +865,7 @@ export async function executeAgentBuild(prompt: string, tasks: Task[], env?: Par
           if (cfAi) {
             modelsUsed.add(route.model.includes("deepseek") ? "DeepSeek R1" : "Llama 3.3");
           } else if (ai) {
-            modelsUsed.add(route.model === "gemini-2.5-pro" ? "Pro" : "Flash");
+            modelsUsed.add(route.model === "gemini-3.1-pro-preview" ? "Pro" : "Flash");
           } else {
             modelsUsed.add("Local Fallback Engine");
           }
@@ -1023,7 +944,7 @@ CRITICAL PATH RULES:
               modelsUsed.add("CF-AI");
             } else if (ai) {
               const pathResponse = await ai.models.generateContent({
-                model: "gemini-2.5-flash",
+                model: "gemini-3.6-flash",
                 contents: pathUserContent,
                 config: { systemInstruction: pathSystemPrompt, responseMimeType: "application/json" }
               });
@@ -1106,7 +1027,7 @@ CRITICAL PATH RULES:
               // Retry with Flash model
               try {
                 code = await generateSubtaskCode(
-                  cfAi || ai, cfAi ? "@cf/meta/llama-3.3-70b-instruct-fp8-fast" : "gemini-2.5-flash", prompt, sub.name, targetPath,
+                  cfAi || ai, cfAi ? "@cf/meta/llama-3.3-70b-instruct-fp8-fast" : "gemini-3.6-flash", prompt, sub.name, targetPath,
                   freshFiles, conversationHistory, generationError
                 );
                 generationError = undefined;

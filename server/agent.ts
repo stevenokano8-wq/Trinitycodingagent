@@ -323,26 +323,31 @@ const INSTANT_COMMAND_PATTERNS: Array<{ test: RegExp; cmd: (m: RegExpMatchArray)
   // "create a folder" / "make a folder" — NO name given → auto-name
   { test: /^(?:create|make|add|new|mkdir)\s+(?:a\s+)?(?:new\s+)?(?:folder|directory|dir)\s*$/i, cmd: () => `mkdir -p ${autoFolderName()}` },
   // "create a folder called src/utils" / "make a folder named foo"
-  { test: /\b(?:create|make|add|mkdir)\s+(?:a\s+)?(?:folder|directory|dir)\s+(?:called\s+|named\s+)?([^\s,]+)/i, cmd: (m) => `mkdir -p ${m[1].replace(/^\//, "")}` },
+  { test: /^(?:create|make|add|mkdir)\s+(?:a\s+)?(?:folder|directory|dir)\s+(?:called\s+|named\s+)?([a-zA-Z0-9_./-]+)$/i, cmd: (m) => `mkdir -p ${m[1].replace(/^\//, "")}` },
   // "create src/utils folder" / "add components/ folder"
-  { test: /\b(?:create|add|make)\s+([a-zA-Z0-9_./-]+)\s+(?:folder|directory|dir)\b/i, cmd: (m) => `mkdir -p ${m[1].replace(/^\//, "")}` },
+  { test: /^(?:create|add|make)\s+([a-zA-Z0-9_./-]+)\s+(?:folder|directory|dir)$/i, cmd: (m) => `mkdir -p ${m[1].replace(/^\//, "")}` },
   // plain "mkdir src/utils" at start of prompt
-  { test: /^mkdir\s+(-p\s+)?([a-zA-Z0-9_./-]+)/i, cmd: (m) => `mkdir -p ${(m[2] || m[1]).replace(/^\//, "")}` },
+  { test: /^mkdir\s+(-p\s+)?([a-zA-Z0-9_./-]+)$/i, cmd: (m) => `mkdir -p ${(m[2] || m[1]).replace(/^\//, "")}` },
   // "touch file.ts" or "create file foo.ts"
-  { test: /^(?:touch|new file|create file)s+([a-zA-Z0-9_./-]+)/i, cmd: (m) => `touch ${m[1]}` },
+  { test: /^(?:touch|new file|create file)\s+([a-zA-Z0-9_./-]+)$/i, cmd: (m) => `touch ${m[1]}` },
   // "delete file foo.ts" / "remove file"
-  { test: /^(?:delete|remove|rm)s+(?:files+)?([a-zA-Z0-9_./-]+)/i, cmd: (m) => `rm -f ${m[1]}` },
+  { test: /^(?:delete|remove|rm)\s+(?:file\s+)?([a-zA-Z0-9_./-]+)$/i, cmd: (m) => `rm -f ${m[1]}` },
   // "run npm install" / "install dependencies"
-  { test: /^(?:runs+)?npms+installs*$/i, cmd: () => 'npm install' },
-  { test: /^installs+(?:alls+)?dep(?:endencies)?/i, cmd: () => 'npm install' },
+  { test: /^(?:run\s+)?npm\s+install\s*$/i, cmd: () => 'npm install' },
+  { test: /^install\s+(?:all\s+)?dep(?:endencies)?\s*$/i, cmd: () => 'npm install' },
   // "git status" / "git log"
-  { test: /^gits+(status|log|diff|pull|fetch)(?:s|$)/i, cmd: (m) => `git ${m[1]}` },
+  { test: /^git\s+(status|log|diff|pull|fetch)\s*$/i, cmd: (m) => `git ${m[1]}` },
 ];
 
 /** Returns a ready-made task list for simple commands without any AI call (<1 ms). */
 function tryInstantPlan(prompt: string): Task[] | null {
+  const trimmed = prompt.trim();
+  // Do NOT instant plan if prompt is long, multi-phrase, or descriptive
+  if (trimmed.length > 50 || trimmed.includes("\n") || trimmed.includes(",") || trimmed.split(/\s+/).length > 8) {
+    return null;
+  }
   for (const p of INSTANT_COMMAND_PATTERNS) {
-    const m = prompt.trim().match(p.test);
+    const m = trimmed.match(p.test);
     if (m) {
       const command = p.cmd(m);
       const folder = command.replace(/^mkdir -p /, "");
@@ -405,7 +410,7 @@ export async function planBuildTasks(userPrompt: string, env?: Partial<AppEnv>, 
     const frameworkDirective = needsFramework
       ? `\n8. FRAMEWORK AUTO-ROUTING (MANDATORY): The workspace has no frontend framework and this prompt implies UI work. Task #1 MUST be "Bootstrap React + Vite project" with these exact subtasks:
    - "Create package.json with react, react-dom, vite, @vitejs/plugin-react, tailwindcss, autoprefixer dependencies"
-   - "Create vite.config.ts with react plugin and server port 5173"
+   - "Create vite.config.ts with react plugin and server port 3000"
    - "Create index.html with <div id=\\"root\\"> and script type=module pointing to src/main.tsx"
    - "Create src/main.tsx with ReactDOM.createRoot mounting App component"
    - "Create src/index.css with Tailwind @import \"tailwindcss\"; directive"

@@ -19,6 +19,7 @@
     "framer-motion": "^11.3.28",
     "lucide-react": "^0.447.0",
     "hono": "^4.6.5",
+    "express": "^4.21.2",
     "@google/genai": "^0.7.0",
     "motion": "^11.11.17",
     "@cloudflare/agents": "^0.0.16",
@@ -38,5 +39,10 @@
     "vite": "^5.4.10",
     "wrangler": "^4.12.0"
   },
-  "type": "module"
+  "type": "module",
+  "overrides": {
+    "express": {
+      "path-to-regexp": "0.1.7"
+    }
+  }
 }

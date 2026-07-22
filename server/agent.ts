@@ -342,8 +342,8 @@ const INSTANT_COMMAND_PATTERNS: Array<{ test: RegExp; cmd: (m: RegExpMatchArray)
 /** Returns a ready-made task list for simple commands without any AI call (<1 ms). */
 function tryInstantPlan(prompt: string): Task[] | null {
   const trimmed = prompt.trim();
-  // Do NOT instant plan if prompt is long, multi-phrase, or descriptive
-  if (trimmed.length > 50 || trimmed.includes("\n") || trimmed.includes(",") || trimmed.split(/\s+/).length > 8) {
+  // Do NOT instant plan if prompt is long, multi-line, or descriptive
+  if (trimmed.length > 35 || trimmed.includes("\n") || trimmed.includes(",") || trimmed.split(/\s+/).length > 5) {
     return null;
   }
   for (const p of INSTANT_COMMAND_PATTERNS) {
@@ -351,6 +351,9 @@ function tryInstantPlan(prompt: string): Task[] | null {
     if (m) {
       const command = p.cmd(m);
       const folder = command.replace(/^mkdir -p /, "");
+      if (folder.length > 30 || folder.includes(" ")) {
+        return null;
+      }
       const taskId = `task-${Date.now()}`;
       return [{ id: taskId, name: `Create folder ${folder}`, status: "pending", progress: 0,
         activeSubtaskIndex: 0, createdAt: new Date().toISOString(),
@@ -467,12 +470,12 @@ CRITICAL RULES:
     const taskId = `task-${Date.now()}`;
     return [{
       id: taskId,
-      name: "Synthesize Feature Elements",
+      name: "Implement Application Features",
       status: "pending",
       progress: 0,
       activeSubtaskIndex: 0,
       createdAt: new Date().toISOString(),
-      subtasks: [{ id: `${taskId}-sub-0`, taskId, name: `Analyze and write features for: ${userPrompt}`, status: "pending", logs: ["Awaiting run..."] }]
+      subtasks: [{ id: `${taskId}-sub-0`, taskId, name: "Implement user requested application feature in src/App.tsx", status: "pending", logs: ["Awaiting run..."] }]
     }];
   }
 }
@@ -751,14 +754,11 @@ export async function executeAgentBuild(prompt: string, tasks: Task[], env?: Par
         broadcastSSE("subtask_log", { subtaskId: sub.id, log: sub.logs[0] });
 
         // Check if this is a terminal/command subtask.
-        // Fix: broadened to catch "Create X folder", "mkdir -p X", and instant-plan names.
         const isCommandTask =
-          /^(run|execute|install|npm|npx|mkdir|delete|move|copy)\s/i.test(sub.name.trim()) ||
-          /\bcreate\s+(?:a\s+)?(?:folder|directory|dir)\b/i.test(sub.name) ||
-          /\b(?:folder|directory)\s+[a-zA-Z0-9_./-]+\s*$/i.test(sub.name) ||
+          /^(run|execute|install|npm|npx|mkdir|delete|remove|touch)\s+/i.test(sub.name.trim()) ||
+          /^mkdir\s+-p\s+/i.test(sub.name.trim()) ||
           sub.name.toLowerCase().includes("install dependencies") ||
-          sub.name.toLowerCase().includes("validate") ||
-          sub.name.toLowerCase().includes("run tests");
+          sub.name.toLowerCase().includes("validate & install");
 
         if (isCommandTask) {
           try {
@@ -983,9 +983,21 @@ CRITICAL PATH RULES:
           if (!targetPath) {
             const isSchema = sub.name.toLowerCase().includes("schema");
             const isApi = sub.name.toLowerCase().includes("api") || sub.name.toLowerCase().includes("endpoint");
-            const extension = isSchema ? "_schema.ts" : isApi ? "_api.ts" : "_component.tsx";
-            const folder = isSchema ? "src/db" : isApi ? "server/routes" : "src/components";
-            targetPath = `${folder}/${sub.name.toLowerCase().replace(/[^a-z0-9]/g, "_").substring(0, 20)}${extension}`;
+            const isApp = sub.name.toLowerCase().includes("app") || sub.name.toLowerCase().includes("main");
+            if (isApp) {
+              targetPath = "src/App.tsx";
+            } else {
+              const extension = isSchema ? ".ts" : isApi ? "_api.ts" : "Component.tsx";
+              const folder = isSchema ? "src/db" : isApi ? "server/routes" : "src/components";
+              const clean = sub.name.toLowerCase()
+                .replace(/^analyze and write features for:?/i, "")
+                .replace(/[^a-z0-9]/g, "_")
+                .replace(/_+/g, "_")
+                .replace(/^_+|_+$/g, "")
+                .substring(0, 15) || "Feature";
+              const capitalized = clean.charAt(0).toUpperCase() + clean.slice(1);
+              targetPath = `${folder}/${capitalized}${extension}`;
+            }
           }
 
           // Create parent folders

@@ -1,12 +1,3 @@
-<<<<<<< HEAD
-import React from "react";
-
-export default function App() {
-  return (
-    <div className="min-h-screen bg-black text-white p-8 flex flex-col items-center justify-center font-sans">
-      <h1 className="text-3xl font-bold mb-4">React + Vite Workspace</h1>
-      <p className="text-stone-400">Created for: create a react vite project with blue backgrounf</p>
-=======
 import React, { useState } from "react";
 import { Palette, Sparkles, Code2, RefreshCw, Layers } from "lucide-react";
 
@@ -182,7 +173,6 @@ export default function App() {
       <footer className="py-6 border-t border-white/10 bg-black/20 text-center text-xs text-blue-200/60">
         Built with React + Vite & Tailwind CSS
       </footer>
->>>>>>> 4f33561 (fix: enable dynamic prompt theme extraction for background colors and update App.tsx with custom blue background)
     </div>
   );
 }

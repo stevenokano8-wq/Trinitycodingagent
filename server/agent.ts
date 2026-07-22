@@ -741,8 +741,9 @@ export async function executeAgentBuild(prompt: string, tasks: Task[], env?: Par
         sub.status = "running";
         sub.startedAt = new Date().toISOString();
         sub.logs = [`Starting execution of: "${sub.name}"...`];
-        broadcastSSE("subtask_log", { subtaskId: sub.id, log: sub.logs[0] });
         await saveTask(task);
+        broadcastSSE("task-update", task);
+        broadcastSSE("subtask_log", { subtaskId: sub.id, log: sub.logs[0] });
 
         // Check if this is a terminal/command subtask.
         // Fix: broadened to catch "Create X folder", "mkdir -p X", and instant-plan names.
@@ -1087,7 +1088,10 @@ CRITICAL PATH RULES:
 
         } catch (subErr: any) {
           sub.status = "failed";
+          sub.completedAt = new Date().toISOString();
           sub.logs.push(`[ERROR] ${subErr.message}`);
+          await saveTask(task);
+          broadcastSSE("task-update", task);
           broadcastSSE("subtask_log", { subtaskId: sub.id, log: sub.logs[sub.logs.length - 1] });
         }
 

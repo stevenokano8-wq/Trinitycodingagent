@@ -912,25 +912,40 @@ export default function App() {
             const updatedSubtasks = [...task.subtasks];
             const originalSubtask = updatedSubtasks[subtaskIdx];
             
-            // Check if log already exists to avoid duplication
-            if (!originalSubtask.logs.includes(data.log)) {
-              updatedSubtasks[subtaskIdx] = {
-                ...originalSubtask,
-                logs: [...originalSubtask.logs, data.log]
-              };
-              
-              // If subtask failed or completed, let's propagate status transitions
-              let parentStatus = task.status;
-              if (originalSubtask.status === "failed") {
-                parentStatus = "failed";
-              }
-              
-              return {
-                ...task,
-                status: parentStatus,
-                subtasks: updatedSubtasks
-              };
+            // Infer status transition from log line content
+            let subStatus = originalSubtask.status;
+            if (subStatus === "pending") {
+              subStatus = "running";
             }
+            if (data.log.includes("[DONE]") || data.log.includes("[SUCCESS]") || data.log.includes("[SKIP]")) {
+              subStatus = "completed";
+            } else if (data.log.includes("[ERROR]") || data.log.includes("⛔") || data.log.includes("[CMD] Error")) {
+              subStatus = "failed";
+            }
+
+            const logs = originalSubtask.logs.includes(data.log) 
+              ? originalSubtask.logs 
+              : [...originalSubtask.logs, data.log];
+
+            updatedSubtasks[subtaskIdx] = {
+              ...originalSubtask,
+              status: subStatus,
+              logs
+            };
+            
+            let parentStatus = task.status;
+            if (subStatus === "failed") {
+              parentStatus = "failed";
+            }
+
+            const nextActiveSubtaskIndex = Math.max(task.activeSubtaskIndex ?? 0, subtaskIdx);
+            
+            return {
+              ...task,
+              status: parentStatus,
+              activeSubtaskIndex: nextActiveSubtaskIndex,
+              subtasks: updatedSubtasks
+            };
           }
           return task;
         });

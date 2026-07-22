@@ -556,7 +556,8 @@ export default function TaskAccordion({
           >
             <div className="p-4 flex flex-col gap-3.5 bg-slate-50/40">
               {task.subtasks.map((sub, sIdx) => {
-                const isSubtaskLocked = isLocked || sIdx > task.activeSubtaskIndex || (task.status === "pending" && sIdx > 0);
+                const hasStartedOrLogged = sub.status === "running" || sub.status === "completed" || sub.status === "failed" || (sub.logs && sub.logs.length > 1);
+                const isSubtaskLocked = isLocked || (!hasStartedOrLogged && (sIdx > task.activeSubtaskIndex || (task.status === "pending" && sIdx > 0)));
                 return (
                   <SubtaskAccordionItem
                     key={sub.id}

@@ -21,6 +21,8 @@ const WELL_KNOWN_VARS: Omit<EnvVar, "value" | "isSet">[] = [
   { key: "CLOUDFLARE_API_TOKEN",        description: "Cloudflare API token for deployments",                      category: "cloudflare"  },
   { key: "CLOUDFLARE_ACCOUNT_ID",       description: "Cloudflare account ID",                                     category: "cloudflare"  },
   { key: "DATABASE_URL",                description: "PostgreSQL or D1 connection string",                        category: "database"    },
+  { key: "SUPABASE_URL",                description: "Supabase project URL",                                      category: "database"    },
+  { key: "SUPABASE_ANON_KEY",           description: "Supabase anonymous/public API key",                        category: "database"    },
   { key: "UPSTASH_REDIS_REST_URL",      description: "Upstash Redis REST endpoint",                              category: "database"    },
   { key: "UPSTASH_REDIS_REST_TOKEN",    description: "Upstash Redis REST token",                                 category: "database"    },
 ];

@@ -6,12 +6,16 @@ import dotenv from "dotenv";
 // Load environment variables
 dotenv.config();
 
-import { initDb, getMessages, addMessage, clearMessages, getTasks, deleteTasks, getFiles, clearFiles, saveFile } from "./server/db.js";
+import { initDb, getMessages, addMessage, clearMessages, getTasks, deleteTasks, getFiles, clearFiles, saveFile, listAgentWorkspaceFiles } from "./server/db.js";
 import { initCache, cacheFlush } from "./server/cache.js";
-import { planBuildTasks, executeAgentBuild, sseClients, broadcastSSE, cancelActiveBuild } from "./server/agent.js";
+import { planBuildTasks, executeAgentBuild, sseClients, broadcastSSE, cancelActiveBuild, getSuspendedFrame, resumeSuspendedExecution, fetchSymbolDependencies, buildASTGraph } from "./server/agent.js";
 import { getGithubConfig, saveGithubConfig, executeGitPush, executeGitPullRequest } from "./server/github.js";
 import { setRuntimeOverrides, resolveEnvWithOverrides } from "./server/env.js";
+import { getLogDrops, clearLogDrops } from "./server/logger.js";
+import { executeTerminalCommand } from "./server/command.js";
 import { DatabaseStatus, Message, FileNode } from "./src/types.js";
+import * as fs from "fs";
+import * as childProcess from "child_process";
 
 // This Express server is the local development entry (`pnpm dev`/`pnpm start`).
 // Production runs as a Cloudflare Worker via server/worker.ts instead — both
@@ -252,13 +256,18 @@ app.post("/api/files/save", async (req, res) => {
 // API: Update settings (in-memory for this process only)
 app.post("/api/settings", async (req, res) => {
   try {
-    const { geminiApiKey } = req.body;
+    const { geminiApiKey, githubToken, githubRepoUrl, cloudflareAccountId, cloudflareApiToken } = req.body;
 
-    // Applied as in-memory overrides for this process only, matching the
-    // Workers production entry (server/worker.ts) which has no writable
-    // disk/.env either. D1/KV are bindings fixed at deploy time and cannot
-    // be reconfigured at runtime — only Gemini's key can be overridden here.
-    if (geminiApiKey) setRuntimeOverrides({ GEMINI_API_KEY: geminiApiKey });
+    const updates: Record<string, string> = {};
+    if (geminiApiKey) updates.GEMINI_API_KEY = geminiApiKey;
+    if (githubToken) updates.GITHUB_TOKEN = githubToken;
+    if (githubRepoUrl) updates.GITHUB_REPO_URL = githubRepoUrl;
+    if (cloudflareAccountId) updates.CLOUDFLARE_ACCOUNT_ID = cloudflareAccountId;
+    if (cloudflareApiToken) updates.CLOUDFLARE_API_TOKEN = cloudflareApiToken;
+
+    if (Object.keys(updates).length > 0) {
+      setRuntimeOverrides(updates);
+    }
 
     // Re-trigger DB/cache initializations
     const dStatus = await initDb();
@@ -276,6 +285,20 @@ app.post("/api/settings", async (req, res) => {
         kv: dbStatus.kv,
       }
     });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// API: Save key/value environment variable
+app.post("/api/settings/env", async (req, res) => {
+  try {
+    const { key, value } = req.body;
+    if (!key) {
+      return res.status(400).json({ error: "key is required" });
+    }
+    setRuntimeOverrides({ [key]: value || "" });
+    res.json({ status: "success", message: `Environment variable ${key} updated successfully.` });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -327,6 +350,220 @@ app.post("/api/github/push", async (req, res) => {
   }
 });
 
+// API: Get suspended frame status (HITL Gate)
+app.get("/api/agent/suspended", (req, res) => {
+  const frame = getSuspendedFrame();
+  res.json({ suspended: !!frame, frame });
+});
+
+// API: Approve suspended agent execution
+app.post("/api/agent/approve", async (req, res) => {
+  try {
+    const { note } = req.body || {};
+    const result = await resumeSuspendedExecution(true, note);
+    res.json(result);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// API: Reject suspended agent execution
+app.post("/api/agent/reject", async (req, res) => {
+  try {
+    const { note } = req.body || {};
+    const result = await resumeSuspendedExecution(false, note);
+    res.json(result);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// API: Get symbol dependencies / AST graph
+app.get("/api/agent/dependencies", async (req, res) => {
+  try {
+    const symbol = req.query.symbol as string;
+    if (symbol) {
+      const deps = await fetchSymbolDependencies(symbol);
+      return res.json({ symbol, dependencies: deps });
+    }
+    const files = await getFiles();
+    const graph = buildASTGraph(files);
+    const result: Record<string, any> = {};
+    for (const [p, nodes] of graph.entries()) {
+      result[p] = nodes;
+    }
+    res.json({ graph: result });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// API: Execute sandbox terminal command
+app.post("/api/command/sandbox", async (req, res) => {
+  try {
+    const { command, cwd } = req.body || {};
+    if (!command) return res.status(400).json({ error: "command is required" });
+
+    const result = await executeTerminalCommand(command, {
+      cwd,
+      onStream: (chunk) => {
+        broadcastSSE("terminal-output", chunk);
+      }
+    });
+    res.json(result);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// API: Logs & Cache
+app.get("/api/logs", (req, res) => {
+  const logs = getLogDrops();
+  res.json({ count: logs.length, logs });
+});
+
+app.post("/api/logs/clear", (req, res) => {
+  clearLogDrops();
+  res.json({ status: "cleared" });
+});
+
+app.post("/api/cache/clear", async (req, res) => {
+  try {
+    await cacheFlush();
+    res.json({ status: "cleared" });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// API: Custom environment variables
+app.post("/api/settings/env", (req, res) => {
+  try {
+    const { key, value } = req.body || {};
+    if (!key || !value) return res.status(400).json({ error: "key and value required" });
+    setRuntimeOverrides({ [key]: value } as any);
+    res.json({ success: true, key });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// API: Workspace operations
+app.get("/api/workspace/list", (req, res) => {
+  try {
+    const diskFiles = listAgentWorkspaceFiles();
+    res.json({ files: diskFiles });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/workspace/file", async (req, res) => {
+  try {
+    const filePath = req.query.path as string;
+    if (!filePath) return res.status(400).json({ error: "path required" });
+    const files = await getFiles();
+    const file = files.find(f => f.path === filePath);
+    if (!file) return res.status(404).json({ error: "file not found" });
+    const mimeMap: Record<string, string> = {
+      html: "text/html", css: "text/css", js: "application/javascript", ts: "application/typescript",
+      json: "application/json", md: "text/markdown", png: "image/png", jpg: "image/jpeg", svg: "image/svg+xml",
+    };
+    const ext = filePath.split(".").pop()?.toLowerCase() ?? "";
+    const mime = mimeMap[ext] ?? "text/plain";
+    res.setHeader("Content-Type", `${mime}; charset=utf-8`);
+    res.send(file.content);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/workspace/preview", async (req, res) => {
+  try {
+    const files = await getFiles();
+    const htmlFile = files.find(f => f.path === "index.html" || f.path.endsWith("/index.html")) || files.find(f => f.path.endsWith(".html"));
+    if (!htmlFile) {
+      const jsFiles = files.filter(f => f.path.endsWith(".js") || f.path.endsWith(".ts") || f.path.endsWith(".jsx") || f.path.endsWith(".tsx"));
+      const cssFiles = files.filter(f => f.path.endsWith(".css"));
+      const cssInline = cssFiles.map(f => `/* ${f.path} */\n${f.content}`).join("\n\n");
+      const html = `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Preview</title>${cssInline ? `<style>${cssInline}</style>` : ""}</head><body><div id="root"></div></body></html>`;
+      res.setHeader("Content-Type", "text/html; charset=utf-8");
+      return res.send(html);
+    }
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    res.send(htmlFile.content);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/workspace/compile", async (req, res) => {
+  const cwd = process.cwd();
+  const wsDir = path.join(cwd, "agent-workspace");
+  if (!fs.existsSync(wsDir)) return res.status(404).json({ ok: false, error: "agent-workspace directory does not exist yet" });
+
+  const cmd = fs.existsSync(path.join(wsDir, "package.json"))
+    ? "npm install --prefer-offline && npx vite build --outDir dist 2>&1"
+    : "echo 'No package.json — nothing to compile'";
+
+  childProcess.exec(cmd, { cwd: wsDir, timeout: 120_000, maxBuffer: 5 * 1024 * 1024 }, (err, stdout, stderr) => {
+    const output = (stdout + stderr).slice(0, 8000);
+    broadcastSSE("workspace-compiled", { ok: !err, output });
+    res.json({ ok: !err, output, error: err?.message });
+  });
+});
+
+app.post("/api/clone-repo", async (req, res) => {
+  try {
+    const { repoUrl, token, targetDir } = req.body || {};
+    if (!repoUrl) return res.status(400).json({ ok: false, error: "repoUrl is required" });
+
+    let cloneUrl = repoUrl.trim();
+    if (token && cloneUrl.startsWith("https://")) {
+      cloneUrl = cloneUrl.replace("https://", `https://${token}@`);
+    }
+
+    const cwd = process.cwd();
+    const dest = path.join(cwd, "agent-workspace", targetDir || "cloned-repo");
+
+    if (fs.existsSync(dest)) fs.rmSync(dest, { recursive: true, force: true });
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+
+    childProcess.exec(`git clone --depth=1 "${cloneUrl}" "${dest}"`, { timeout: 60_000 }, async (err, stdout, stderr) => {
+      if (err) {
+        const safeErr = (stderr || err.message).replace(token || "", "***");
+        return res.json({ ok: false, error: safeErr });
+      }
+
+      const clonedFiles: string[] = [];
+      const walk = (dir: string) => {
+        for (const e of fs.readdirSync(dir)) {
+          const full = path.join(dir, e);
+          if (e === ".git") continue;
+          if (fs.statSync(full).isDirectory()) { walk(full); continue; }
+          clonedFiles.push(full);
+        }
+      };
+      walk(dest);
+
+      for (const full of clonedFiles.slice(0, 200)) {
+        try {
+          const rel = path.relative(path.join(cwd, "agent-workspace"), full);
+          const content = fs.readFileSync(full, "utf8");
+          const ext = full.split(".").pop()?.toLowerCase() ?? "text";
+          const lang: Record<string, string> = { ts: "typescript", tsx: "typescript", js: "javascript", jsx: "javascript", css: "css", html: "html", json: "json", md: "markdown", py: "python", sh: "bash" };
+          await saveFile({ path: rel, content, language: lang[ext] ?? "text" });
+          broadcastSSE("file-created", { path: rel, content, language: lang[ext] ?? "text" });
+        } catch (_) {}
+      }
+
+      res.json({ ok: true, message: `Cloned ${repoUrl} into agent-workspace/`, dest });
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // API: Trigger project PR creation on GitHub remote
 app.post("/api/github/pull-request", async (req, res) => {
   try {
@@ -353,7 +590,7 @@ app.post("/api/github/pull-request", async (req, res) => {
 });
 
 // API: Real-time progress updates SSE connection
-app.get("/api/tasks/stream", (req, res) => {
+app.get(["/api/tasks/stream", "/api/agent/stream", "/api/build/stream"], (req, res) => {
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache, no-transform");
   res.setHeader("Connection", "keep-alive");
@@ -375,6 +612,11 @@ app.get("/api/tasks/stream", (req, res) => {
     clearInterval(heartbeat);
     sseClients.delete(res);
   });
+});
+
+// API 404 catch-all to prevent unhandled API routes falling through to Vite proxy
+app.use("/api", (req, res) => {
+  res.status(404).json({ error: `API route not found: ${req.originalUrl}` });
 });
 
 async function startServer() {

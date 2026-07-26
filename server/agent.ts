@@ -170,7 +170,8 @@ let aiClient: GoogleGenAI | null = null;
 let aiClientKey: string | null = null;
 
 export function getGeminiClient(env?: Partial<AppEnv>): GoogleGenAI | null {
-  const key = resolveEnvWithOverrides(env).GEMINI_API_KEY;
+  const resolved = resolveEnvWithOverrides(env);
+  const key = resolved.GEMINI_API_KEY || (typeof process !== "undefined" ? process.env?.GEMINI_API_KEY : undefined);
   if (!key) {
     return null;
   }
@@ -182,6 +183,23 @@ export function getGeminiClient(env?: Partial<AppEnv>): GoogleGenAI | null {
     aiClientKey = key;
   }
   return aiClient;
+}
+
+export function logProviderReadiness(env?: Partial<AppEnv>): void {
+  const resolved = resolveEnvWithOverrides(env);
+  const geminiKey = resolved.GEMINI_API_KEY || (typeof process !== "undefined" ? process.env?.GEMINI_API_KEY : undefined);
+  const geminiStatus = geminiKey ? "AVAILABLE" : "MISSING";
+
+  const cfAiBound = !!(resolved.AI && typeof (resolved.AI as any).run === "function");
+  const cfToken = resolved.CLOUDFLARE_API_TOKEN || (typeof process !== "undefined" ? (process.env?.CLOUDFLARE_API_TOKEN || process.env?.CF_API_TOKEN) : undefined);
+  const cfAccount = resolved.CLOUDFLARE_ACCOUNT_ID || (typeof process !== "undefined" ? (process.env?.CLOUDFLARE_ACCOUNT_ID || process.env?.CF_ACCOUNT_ID) : undefined);
+  const cfAiStatus = (cfAiBound || (cfToken && cfAccount)) ? "AVAILABLE" : "MISSING";
+
+  const dsKey = resolved.DEEPSEEK_API_KEY || (typeof process !== "undefined" ? process.env?.DEEPSEEK_API_KEY : undefined);
+  const oaiKey = resolved.OPENAI_API_KEY || (typeof process !== "undefined" ? process.env?.OPENAI_API_KEY : undefined);
+  const dsOaiStatus = (dsKey || oaiKey) ? "AVAILABLE" : "MISSING";
+
+  console.log(`[PROVIDER CHECK] Gemini: ${geminiStatus} | CF AI: ${cfAiStatus} | DeepSeek/OpenAI: ${dsOaiStatus}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -234,9 +252,13 @@ export async function callCloudflareWorkersAi(
     ? [{ role: "system", content: systemPrompt }, ...messages]
     : messages;
 
-  // 1. Native Workers AI binding inside Cloudflare Worker context
+  // 1. Native Workers AI binding inside Cloudflare Worker context (guarded for missing bindings or Wrangler dev mode)
   if (resolved.AI && typeof (resolved.AI as any).run === "function") {
-    return runCfAi(resolved.AI, formattedMessages, maxTokens, model);
+    try {
+      return await runCfAi(resolved.AI, formattedMessages, maxTokens, model);
+    } catch (cfErr: any) {
+      console.warn(`[WRANGLER / CF AI BINDING GUARD] Workers AI binding execution failed (${cfErr?.message || cfErr}). Falling back smoothly to REST/secondary key...`);
+    }
   }
 
   // 2. Fallback REST API call using CLOUDFLARE_API_TOKEN & CLOUDFLARE_ACCOUNT_ID
@@ -945,6 +967,7 @@ const UI_PROMPT_REGEX = /\b(background|gradient|animation|hero|landing|page|comp
 // 1. Dynamic Task Planner — uses Cloudflare AI binding when available
 // ---------------------------------------------------------------------------
 export async function planBuildTasks(userPrompt: string, env?: Partial<AppEnv>, attachment?: any): Promise<Task[]> {
+  logProviderReadiness(env);
   // ── Instant path: no AI call for trivial folder/command prompts ────────────
   if (!attachment) {
     const instant = tryInstantPlan(userPrompt);
@@ -1327,6 +1350,7 @@ ${workspaceContext}`;
 // 2. Real-World Sequential Execution Loop
 // ---------------------------------------------------------------------------
 export async function executeAgentBuild(prompt: string, tasks: Task[], env?: Partial<AppEnv>, attachment?: any) {
+  logProviderReadiness(env);
   const startTime = Date.now();
   const modelsUsed = new Set<string>();
   const actionsTaken: any[] = [];

@@ -168,6 +168,8 @@ export interface AppEnv {
 
   // ── Secrets / env vars ─────────────────────────────────────────────────────
   GEMINI_API_KEY?: string;
+  DEEPSEEK_API_KEY?: string;
+  OPENAI_API_KEY?: string;
   GITHUB_TOKEN?: string;
   GITHUB_REPO_URL?: string;
   CLOUDFLARE_ACCOUNT_ID?: string;
@@ -207,5 +209,15 @@ export function resolveEnvWithOverrides(env?: Partial<AppEnv>): Partial<AppEnv> 
     if (process.env.UPSTASH_REDIS_REST_URL) nodeEnv.UPSTASH_REDIS_REST_URL = process.env.UPSTASH_REDIS_REST_URL;
     if (process.env.UPSTASH_REDIS_REST_TOKEN) nodeEnv.UPSTASH_REDIS_REST_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN;
   }
-  return { ...nodeEnv, ...env, ..._runtimeOverrides };
+  const merged = { ...nodeEnv, ...env, ..._runtimeOverrides };
+  
+  // Guarantee fallback to nodeEnv/process.env if CF Worker binding is empty or missing
+  if (!merged.GEMINI_API_KEY && nodeEnv.GEMINI_API_KEY) merged.GEMINI_API_KEY = nodeEnv.GEMINI_API_KEY;
+  if (!merged.DEEPSEEK_API_KEY && nodeEnv.DEEPSEEK_API_KEY) merged.DEEPSEEK_API_KEY = nodeEnv.DEEPSEEK_API_KEY;
+  if (!merged.OPENAI_API_KEY && nodeEnv.OPENAI_API_KEY) merged.OPENAI_API_KEY = nodeEnv.OPENAI_API_KEY;
+  if (!merged.CLOUDFLARE_API_TOKEN && nodeEnv.CLOUDFLARE_API_TOKEN) merged.CLOUDFLARE_API_TOKEN = nodeEnv.CLOUDFLARE_API_TOKEN;
+  if (!merged.CLOUDFLARE_ACCOUNT_ID && nodeEnv.CLOUDFLARE_ACCOUNT_ID) merged.CLOUDFLARE_ACCOUNT_ID = nodeEnv.CLOUDFLARE_ACCOUNT_ID;
+  if (!merged.GITHUB_TOKEN && nodeEnv.GITHUB_TOKEN) merged.GITHUB_TOKEN = nodeEnv.GITHUB_TOKEN;
+
+  return merged;
 }

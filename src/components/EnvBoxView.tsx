@@ -21,8 +21,6 @@ const WELL_KNOWN_VARS: Omit<EnvVar, "value" | "isSet">[] = [
   { key: "CLOUDFLARE_API_TOKEN",        description: "Cloudflare API token for deployments",                      category: "cloudflare"  },
   { key: "CLOUDFLARE_ACCOUNT_ID",       description: "Cloudflare account ID",                                     category: "cloudflare"  },
   { key: "DATABASE_URL",                description: "PostgreSQL or D1 connection string",                        category: "database"    },
-  { key: "SUPABASE_URL",                description: "Supabase project URL",                                      category: "database"    },
-  { key: "SUPABASE_ANON_KEY",           description: "Supabase anonymous/public API key",                        category: "database"    },
   { key: "UPSTASH_REDIS_REST_URL",      description: "Upstash Redis REST endpoint",                              category: "database"    },
   { key: "UPSTASH_REDIS_REST_TOKEN",    description: "Upstash Redis REST token",                                 category: "database"    },
 ];
@@ -285,7 +283,6 @@ export default function EnvBoxView() {
             <motion.div key="connect" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }} className="space-y-4">
               {[
                 { name: "GitHub API", desc: "Read/write repos, issues, PRs", icon: <Github className="h-5 w-5" />, keyHint: "GITHUB_TOKEN" },
-                { name: "Supabase",   desc: "Postgres DB + Auth + Storage",  icon: <Database className="h-5 w-5 text-green-600" />, keyHint: "SUPABASE_ANON_KEY" },
                 { name: "Gemini AI",  desc: "Code gen, vision, embeddings",  icon: <Cpu className="h-5 w-5 text-violet-600" />, keyHint: "GEMINI_API_KEY" },
                 { name: "Cloudflare", desc: "Workers, D1, KV, R2, Pages",    icon: <Globe className="h-5 w-5 text-orange-500" />, keyHint: "CLOUDFLARE_API_TOKEN" },
               ].map(src => {

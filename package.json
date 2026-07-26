@@ -3,8 +3,9 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc --noEmit && vite build",
+    "dev": "tsx server.ts",
+    "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
+    "start": "node dist/server.cjs",
     "preview": "vite preview",
     "worker:dev": "wrangler dev --config wrangler.api.toml --port 8787",
     "worker:deploy": "wrangler deploy --config wrangler.api.toml",
@@ -15,6 +16,7 @@
   "dependencies": {
     "@cloudflare/agents": "^0.0.16",
     "@google/genai": "^0.7.0",
+    "express": "^5.2.1",
     "hono": "^4.6.14",
     "lucide-react": "^0.454.0",
     "motion": "^11.13.1",
@@ -22,12 +24,15 @@
     "react-dom": "^18.3.1"
   },
   "devDependencies": {
+    "@types/express": "^5.0.6",
     "@types/node": "^22.10.2",
     "@types/react": "^18.3.13",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.4",
     "autoprefixer": "^10.4.20",
+    "esbuild": "^0.28.1",
     "tailwindcss": "^4.0.0",
+    "tsx": "^4.23.1",
     "typescript": "^5.7.2",
     "vite": "^6.0.5",
     "wrangler": "^3.100.0"

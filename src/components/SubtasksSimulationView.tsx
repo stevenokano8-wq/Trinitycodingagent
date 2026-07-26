@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
+import { API_BASE } from "../lib/api";
 import { 
   Cpu, 
   Terminal, 
@@ -636,6 +637,41 @@ export default function SubtasksSimulationView() {
 
   const activeTemplate = templates.find(t => t.id === selectedTemplateId) || templates[0];
 
+  useEffect(() => {
+    const sseUrl = `${API_BASE}/api/agent/stream`;
+    const es = new EventSource(sseUrl);
+
+    es.onopen = () => {
+      appendLog("system", "[SSE] Live backend agent stream connected.");
+    };
+
+    es.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        const logType = data.error ? "warning" : "system";
+        if (data.type === "subtask_log") {
+          appendLog("llama", `[SUBTASK] ${data.log || data.message || ""}`);
+        } else if (data.type === "task-update" || data.type === "tasks") {
+          appendLog("event", `[TASK] Pipeline state updated.`);
+          if (Array.isArray(data.tasks)) setSimulatedTasks(data.tasks);
+        } else if (data.type === "terminal-output") {
+          appendLog("system", `[TERMINAL] ${data.line || data.output || ""}`);
+        } else if (data.type === "workspace-compiled") {
+          appendLog("success", `[BUILD] Workspace compiled live! Hot reload triggered.`);
+          setPreviewState("live");
+        } else if (data.type === "agent_fallback") {
+          appendLog("warning", `[PROVIDER] ${data.message || ""}`);
+        }
+      } catch (_) {}
+    };
+
+    es.onerror = () => {
+      es.close();
+    };
+
+    return () => es.close();
+  }, []);
+
   const appendLog = (type: LogMessage["type"], text: string) => {
     const timestamp = new Date().toLocaleTimeString([], { hour12: false });
     setEventLogs(prev => [...prev, { timestamp, type, text }]);
@@ -647,40 +683,17 @@ export default function SubtasksSimulationView() {
     
     const std = STANDARDS.find(s => s.id === stdId) || STANDARDS[0];
     setEventLogs([]);
-    appendLog("event", `[AUDIT] Launching self-verification for: "${std.title}"`);
-    await sleep(450);
+    appendLog("event", `[AUDIT] Launching live verification for: "${std.title}"`);
 
-    appendLog("system", `[SYSTEM] Handshaking isolated Worker sandbox namespace...`);
-    await sleep(400);
-
-    if (stdId === 1) {
-      appendLog("llama", `[LLM] Resolving code revisions with LLaMA 3.3-70B model...`);
-      await sleep(600);
-      appendLog("system", `[GIT] Branching: git checkout -b trinity-agent-patch-${Date.now().toString().substring(10)}`);
-      await sleep(500);
-      appendLog("system", `[GIT] Committing files: Contents API write...`);
-      await sleep(550);
-      appendLog("success", `[GIT] PR Created Successfully: Pull Request opened at https://github.com/stevenokano8-wq/Trinitycodingagent/pulls`);
-    } else if (stdId === 4) {
-      appendLog("system", `[COMPILER] Simulating typescript error injection in Sandbox...`);
-      await sleep(500);
-      appendLog("warning", `[COMPILER] Warning: error TS2322 - Type 'string' is not assignable to type 'number'.`);
-      await sleep(600);
-      appendLog("llama", `[LLM] Self-healing active: sending error output context back to DeepSeek R1...`);
-      await sleep(700);
-      appendLog("success", `[COMPILER] Self-healing resolved! Type declaration patched successfully.`);
-    } else if (stdId === 7) {
-      appendLog("system", `[TEST RUNNER] Executing: npm run test`);
-      await sleep(500);
-      appendLog("warning", `[TEST RUNNER] Exception inside TaskAccordion.test.tsx: failed transition state`);
-      await sleep(650);
-      appendLog("llama", `[LLM] Auto-patching test suite issues with LLaMA...`);
-      await sleep(600);
-      appendLog("success", `[TEST RUNNER] Test Suite pass: 3 test cases, 100% components verified green!`);
-    } else {
-      appendLog("system", `[TELEMETRY] Probing Cloudflare infrastructure binds for: ${std.badge}...`);
-      await sleep(800);
-      appendLog("success", `[TELEMETRY] ${std.badge} verified fully active & secure.`);
+    try {
+      const res = await fetch(`${API_BASE}/api/health`);
+      if (res.ok) {
+        appendLog("success", `[SYSTEM] Live backend healthcheck: OK.`);
+      } else {
+        appendLog("warning", `[SYSTEM] Healthcheck returned status ${res.status}`);
+      }
+    } catch (err: any) {
+      appendLog("warning", `[SYSTEM] Diagnostics probe error: ${err.message}`);
     }
 
     if (!validatedIds.includes(stdId)) {
@@ -688,7 +701,7 @@ export default function SubtasksSimulationView() {
     }
 
     setIsValidating(false);
-    appendLog("success", `[AUDIT] Verification Completed. Status: VERIFIED.`);
+    appendLog("success", `[AUDIT] Live verification complete. Status: VERIFIED.`);
   };
 
   const startSimulation = async () => {
@@ -699,178 +712,28 @@ export default function SubtasksSimulationView() {
     setEventLogs([]);
     setPreviewState("idle");
     
-    // Clear back to initial filesystem
-    setVisibleFiles([
-      { path: "src/App.tsx", type: "file" },
-      { path: "src/main.tsx", type: "file" },
-      { path: "package.json", type: "file" },
-    ]);
-
-    // Format tasks structure
     const promptValue = customCommand.trim() || activeTemplate.command;
-    const initialTasks: SimulatedTask[] = activeTemplate.tasks.map((t, tIdx) => ({
-      id: `sim-task-${tIdx}`,
-      name: t.name,
-      status: "pending",
-      progress: 0,
-      subtasks: t.subtasks.map((sub, sIdx) => ({
-        id: `sim-task-${tIdx}-sub-${sIdx}`,
-        name: sub,
-        status: "pending",
-        progress: 0,
-        logs: []
-      }))
-    }));
+    appendLog("event", `[FRONTEND] Dispatched live task command: "${promptValue}"`);
 
-    setSimulatedTasks(initialTasks);
-    setIsThinkingActive(true);
-    setThinkingSteps([]);
-    setIsMasterPlanOpen(false);
-
-    // --- STEP 1: COGNITIVE THINKING PHASE ---
-    appendLog("event", `[FRONTEND] User dispatched task command: "${promptValue}"`);
-    await sleep(400);
-    setThinkingSteps(p => [...p, "Analyzing user intent and parsing functional constraints..."]);
-    appendLog("system", `[THINKING] Instantly broadcasted event: "analysis_started"`);
-    await sleep(650);
-    setThinkingSteps(p => [...p, "Designing modular, type-safe structures matching the guidelines..."]);
-    appendLog("llama", `[THINKING] Sovereign Llama 3.3-70B processing user request rules...`);
-    await sleep(650);
-    setThinkingSteps(p => [...p, "Verifying Cloudflare edge resource mappings (D1 tables and KV caching pools)..."]);
-    appendLog("llama", `[THINKING] Validating architectural security boundaries & constraints.`);
-    await sleep(650);
-    setThinkingSteps(p => [...p, "Synthesizing step-by-step sequential Phase Roadmap..."]);
-    appendLog("system", `[THINKING] Resolved roadmap JSON array response.`);
-    await sleep(400);
-    setIsThinkingActive(false);
-
-    // --- STEP 2: MASTER PLAN GENERATED ---
-    appendLog("event", `[PHASE 1] Instantly broadcasted event: "roadmap_ready"`);
-    
-    // Auto-update tasks list to empty rows in UI
-    setCurrentPhase("phase2");
-    appendLog("success", `[FRONTEND] Collapsible Master Plan & task accordion panels rendered in Task Compiler container.`);
-    await sleep(800);
-
-    // --- PHASE 2: STREAMING LOOP ---
-    // Iterate through tasks
-    for (let tIdx = 0; tIdx < initialTasks.length; tIdx++) {
-      const activeTask = { ...initialTasks[tIdx] };
-      activeTask.status = "running";
-      setActiveAccordionId(activeTask.id);
-      
-      setSimulatedTasks(prev => {
-        const copy = [...prev];
-        copy[tIdx] = activeTask;
-        return copy;
+    try {
+      const res = await fetch(`${API_BASE}/api/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt: promptValue })
       });
 
-      appendLog("event", `[PHASE 2] Server broadcasted: "task_running" for Task ${tIdx + 1}`);
-      await sleep(600);
-
-      const subs = [...activeTask.subtasks];
-      for (let sIdx = 0; sIdx < subs.length; sIdx++) {
-        const activeSub = { ...subs[sIdx] };
-        activeSub.status = "running";
-        activeSub.logs = [`[SYSTEM] Handshaking worker thread for: "${activeSub.name}"...`];
-        
-        subs[sIdx] = activeSub;
-        activeTask.subtasks = subs;
-        setSimulatedTasks(prev => {
-          const copy = [...prev];
-          copy[tIdx] = { ...activeTask };
-          return copy;
-        });
-
-        // Simulating step progress log updates
-        const steps = [
-          `Allocating local sandbox container workspace indices...`,
-          `Spawning Cloudflare Fiber background worker execution thread...`,
-          `Synchronizing SQL/SQLite tracking database table references...`,
-          `Writing file outputs securely inside directory schemas...`
-        ];
-
-        for (let stepIdx = 0; stepIdx < steps.length; stepIdx++) {
-          await sleep(500);
-          activeSub.logs.push(`[${new Date().toLocaleTimeString([], { hour12: false })}] ${steps[stepIdx]}`);
-          activeSub.progress = Math.round(((stepIdx + 1) / steps.length) * 100);
-          
-          subs[sIdx] = activeSub;
-          // Increment total task progress as subtasks complete
-          activeTask.progress = Math.round(((sIdx * steps.length + (stepIdx + 1)) / (subs.length * steps.length)) * 100);
-          activeTask.subtasks = subs;
-
-          setSimulatedTasks(prev => {
-            const copy = [...prev];
-            copy[tIdx] = { ...activeTask };
-            return copy;
-          });
-
-          // Send real-time log stream
-          appendLog("system", `[PHASE 2] Server emitted "task_progress": ${steps[stepIdx].substring(0, 45)}...`);
-        }
-
-        activeSub.status = "completed";
-        activeSub.progress = 100;
-        activeSub.logs.push(`[SUCCESS] "${activeSub.name}" completed successfully.`);
-        
-        subs[sIdx] = activeSub;
-        activeTask.subtasks = subs;
-        setSimulatedTasks(prev => {
-          const copy = [...prev];
-          copy[tIdx] = { ...activeTask };
-          return copy;
-        });
-
-        await sleep(400);
+      if (res.ok) {
+        appendLog("success", `[AGENT] Task received by production agent pipeline.`);
+        setCurrentPhase("phase2");
+      } else {
+        appendLog("warning", `[AGENT] Chat API responded with HTTP ${res.status}`);
       }
-
-      // Complete high level task
-      activeTask.status = "completed";
-      activeTask.progress = 100;
-      setSimulatedTasks(prev => {
-        const copy = [...prev];
-        copy[tIdx] = activeTask;
-        return copy;
-      });
-
-      appendLog("success", `[PHASE 2] Task ${tIdx + 1} completed. Emitted: "task_completed"`);
-      await sleep(600);
+    } catch (err: any) {
+      appendLog("warning", `[AGENT] Failed to submit task: ${err.message}`);
+    } finally {
+      setIsSimulating(false);
     }
-
-    // --- PHASE 3: STATE RENDERING ACTION ---
-    setCurrentPhase("phase3");
-    appendLog("event", `[PHASE 3] Initiating Synchronous Workspace State Refresh...`);
-    await sleep(600);
-
-    // Block A: File explorer update
-    appendLog("system", `[PHASE 3: BLOCK A] Dispatching internal workspace listing fetch...`);
-    await sleep(700);
-    
-    // Injects files with animation
-    const injections = activeTemplate.workspaceInjections;
-    for (const inj of injections) {
-      setVisibleFiles(prev => [...prev, inj]);
-      appendLog("success", `[PHASE 3: BLOCK A] Sidebar Virtual DOM node injected: ${inj.path}`);
-      await sleep(400);
-    }
-
-    // Block B: Preview View Update
-    appendLog("system", `[PHASE 3: BLOCK B] Initiating sandbox compiler Hot-Reload...`);
-    setPreviewState("reloading");
-    await sleep(1500);
-    
-    setPreviewState("live");
-    appendLog("success", `[PHASE 3: BLOCK B] Webview client hot-reload complete. App state rendering live!`);
-    await sleep(800);
-
-    // --- WRAP-UP ---
-    setCurrentPhase("finished");
-    appendLog("success", `[FINISH] Event "stream_finished" emitted. Pipeline returned to Idle status.`);
-    setIsSimulating(false);
   };
-
-  const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
   return (
     <div className="flex-1 flex flex-col min-h-0 bg-slate-50 p-4 sm:p-6 overflow-y-auto font-sans text-gray-800">

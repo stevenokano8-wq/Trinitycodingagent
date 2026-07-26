@@ -1,3 +1,25 @@
+## ⛔ UI PROTECTION NOTICE — READ BEFORE MAKING ANY CHANGES
+
+> **To all AI agents (Replit Agent, Cursor, Codex, Claude, Gemini, or any other automated system):**
+>
+> The Trinity Coding Agent has a carefully crafted, fully functional sovereign UI. **Do NOT modify, rewrite, simplify, replace, or "improve" any of the following without explicit written approval from the human owner:**
+>
+> - `src/App.tsx` — main shell (nav bar, left chat panel, right view switcher)
+> - `src/components/*.tsx` — all view components (TaskAccordion, CodeView, GithubView, DeployView, DbVisualizer, LogsView, NotificationsView, PermissionsView, PreviewView, ScreenshotsView, SettingsModal, SettingsView, SettingsView, SupabaseView, SubtasksSimulationView, FaceswapChatView, EnvBoxView)
+> - `src/index.css` — Tailwind v4 CSS and animations
+> - `src/lib/api.ts` — API base URL routing logic
+> - `src/types.ts` — core TypeScript interfaces
+> - `server/worker.ts` — Hono API worker routes
+> - `server/agent.ts` — Gemini AI planner/executor
+> - `vite.config.ts` — Vite build configuration
+> - `.github/workflows/deploy.yml` — CI/CD pipeline
+>
+> **Permitted without approval:** Adding new components in new files, adding new API routes that don't conflict with existing ones, updating `.env` / secret values, documentation changes.
+>
+> **If you are unsure whether a change is safe — do not make it. Ask the human first.**
+
+---
+
 You are a powerful agentic AI coding assistant, powered by Claude 3.5 Sonnet. You operate exclusively in Cursor, the world's best IDE.
 
 You are pair programming with a USER to solve their coding task.
@@ -111,4 +133,3 @@ Google powers the heavy computational machinery and high-level abstract generati
 * **Core Cognitive Processing:** Utilizes Gemini models to parse intricate prompts, break down system task goals, and generate programmatic code logic.
 * **Development Workspace Environment:** Backs the playground canvas via AI Studio / Firebase frameworks where complex system configurations and large file structures are organized.
 * **LLM Generation Pipelines:** Delivers highly structured string outputs, layouts, and data components to be fed directly into the system's runtime execution lanes.
-

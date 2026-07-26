@@ -1320,6 +1320,7 @@ export default function App() {
         ref={fileInputRef} 
         onChange={handleFileChange} 
         className="hidden" 
+        style={{ display: "none" }}
         accept="image/*,.txt,.pdf,.doc,.docx,.json,.js,.ts,.tsx,.css,.html" 
       />
       {/* Top Banner Bar - Fixed non-scrolling for all screen sizes */}
@@ -1349,8 +1350,8 @@ export default function App() {
           </div>
         </div>
 
-        {/* Center: Tabs Bar - Responsive, Chrome Compatible, Fixed Layout */}
-        <div className="flex items-center bg-[#EDE8E0]/70 p-0.5 sm:p-1 rounded-full border border-[#D6CFC7]/60 relative shrink-0 max-w-[calc(100vw-110px)] sm:max-w-none overflow-x-auto scrollbar-none">
+        {/* Right: Tabs Bar - Chat / Preview / Files / More */}
+        <div className="flex items-center bg-[#EDE8E0]/70 p-0.5 sm:p-1 rounded-full border border-[#D6CFC7]/60 relative shrink-0 max-w-[calc(100vw-160px)] sm:max-w-none overflow-x-auto scrollbar-none">
           <button
             id="tab-btn-chat"
             onClick={() => setActiveTab("chat")}
@@ -1466,8 +1467,6 @@ export default function App() {
           </div>
         </div>
 
-        {/* Empty spacer element to balance flex justify-between layout if needed, or simply let flex-between space left/center */}
-        <div className="w-10 sm:w-12 md:hidden block"></div>
       </header>
 
       {/* ── HITL State Suspended Gate Banner (Pillar 4) ────────────────────────── */}

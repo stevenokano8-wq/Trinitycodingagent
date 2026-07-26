@@ -1,10 +1,13 @@
 import React from "react";
+import { createRoot } from "react-dom/client";
+import App from "./App.js";
+import "./index.css";
 
-export default function Main() {
-  return (
-    <div className="min-h-screen bg-black text-white p-8 flex flex-col items-center justify-center font-sans">
-      <h1 className="text-3xl font-bold mb-4">React + Vite Workspace</h1>
-      <p className="text-stone-400">Created for: Create a blue background </p>
-    </div>
-  );
-}
+const container = document.getElementById("root");
+if (!container) throw new Error("Root element not found");
+
+createRoot(container).render(
+  <React.StrictMode>
+    <App />
+  </React.StrictMode>
+);

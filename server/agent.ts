@@ -560,58 +560,93 @@ async function validateGeneratedFile(filePath: string, sub: Subtask, task: Task)
 /**
  * Smart local code synthesis fallback when AI engines are offline or unconfigured.
  */
+/**
+ * Local synthesis fallback — generates structurally-valid placeholder code
+ * that does NOT leak the user prompt or test content into workspace files.
+ * This runs only when all AI providers are unavailable.
+ */
 function synthesizeCodeLocally(
   prompt: string,
   subtaskName: string,
   targetPath: string,
   currentFiles: FileNode[]
 ): string {
-  const normalizedPrompt = prompt.toLowerCase();
   const existingFile = currentFiles.find(f => f.path === targetPath);
-  const baseContent = existingFile ? existingFile.content : "";
+  const baseContent  = existingFile ? existingFile.content : "";
 
-  // 1. If it's a CSS file
+  // CSS — return minimal working stylesheet
   if (targetPath.endsWith(".css")) {
-    return `@import "tailwindcss";\n\nbody {\n  margin: 0;\n  background-color: #000000;\n  color: #ffffff;\n  font-family: system-ui, -apple-system, sans-serif;\n}\n`;
+    return `@import "tailwindcss";\n\nbody {\n  margin: 0;\n  font-family: system-ui, -apple-system, sans-serif;\n}\n`;
   }
 
-  // 2. If it's a text file
+  // Plain text
   if (targetPath.endsWith(".txt")) {
-    const quoteMatch = prompt.match(/["']([^"']+)["']/);
-    if (quoteMatch) return quoteMatch[1];
-    const saysMatch = prompt.match(/says\s+(.+)$/i);
-    if (saysMatch) return saysMatch[1];
-    return `Hello World\n`;
+    return `${subtaskName}\n`;
   }
 
-  // 3. If it's JSON
+  // JSON — return minimal valid JSON, never expose user prompt
   if (targetPath.endsWith(".json")) {
-    return JSON.stringify({ status: "success", message: `Simulated fallback for: ${prompt}` }, null, 2);
+    if (targetPath.includes("package")) {
+      return JSON.stringify({
+        name: "workspace-app", version: "1.0.0", type: "module",
+        scripts: { dev: "vite", build: "vite build" },
+        dependencies: { react: "^18.3.1", "react-dom": "^18.3.1" },
+        devDependencies: { vite: "^6.0.5", "@vitejs/plugin-react": "^4.3.4", typescript: "^5.7.2" }
+      }, null, 2);
+    }
+    return JSON.stringify({ ok: true }, null, 2);
   }
 
-  // 4. If it's a typescript/javascript/tsx file
+  // HTML — proper entry point
+  if (targetPath.endsWith(".html")) {
+    return `<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>App</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>\n`;
+  }
+
+  // TypeScript / JavaScript — generate real, compilable code
   if (targetPath.endsWith(".ts") || targetPath.endsWith(".tsx") || targetPath.endsWith(".js") || targetPath.endsWith(".jsx")) {
-    if (baseContent) {
-      return `${baseContent}\n\n// Agent Fallback: Completed subtask "${subtaskName}" for prompt "${prompt}"\n`;
+    // If an existing file exists, append minimal stub rather than replacing
+    if (baseContent.trim()) {
+      return baseContent;
     }
-    
-    if (targetPath.endsWith(".tsx")) {
+
+    if (targetPath.endsWith(".tsx") || targetPath.endsWith(".jsx")) {
       const componentName = path.basename(targetPath, path.extname(targetPath))
         .replace(/[^a-zA-Z0-9]/g, "")
-        .replace(/^[a-z]/, (c) => c.toUpperCase());
-      return `import React from "react";\n\nexport default function ${componentName || "App"}() {\n  return (\n    <div className="min-h-screen bg-black text-white p-8 flex flex-col items-center justify-center font-sans">\n      <h1 className="text-3xl font-bold mb-4">React + Vite Workspace</h1>\n      <p className="text-stone-400">Created for: ${prompt}</p>\n    </div>\n  );\n}\n`;
+        .replace(/^[a-z]/, (c: string) => c.toUpperCase()) || "App";
+      return `import React from "react";\n\nexport default function ${componentName}() {\n  return (\n    <div style={{ fontFamily: "system-ui", padding: "2rem" }}>\n      <h1>${componentName}</h1>\n    </div>\n  );\n}\n`;
     }
-    
-    return `// Fallback file: ${targetPath}\n// Prompt: ${prompt}\nexport const status = "success";\n`;
+
+    if (targetPath.endsWith("main.tsx") || targetPath.endsWith("main.jsx")) {
+      return `import React from "react";\nimport { createRoot } from "react-dom/client";\nimport App from "./App.js";\n\nconst root = document.getElementById("root");\nif (root) createRoot(root).render(<React.StrictMode><App /></React.StrictMode>);\n`;
+    }
+
+    if (targetPath.includes("vite.config")) {
+      return `import { defineConfig } from "vite";\nimport react from "@vitejs/plugin-react";\n\nexport default defineConfig({ plugins: [react()], server: { port: 3000 } });\n`;
+    }
+
+    return `// ${path.basename(targetPath)}\nexport {};\n`;
   }
 
-  return `File created for request: ${prompt}\nSubtask: ${subtaskName}\n`;
+  // Generic fallback — no user prompt leakage
+  return `// ${subtaskName}\n`;
 }
 
 /**
  * Generate code for a subtask with full context — existing file contents + conversation history.
- * Returns the generated code string.
  * Supports both Cloudflare Workers AI binding and Google Gemini models.
+ * When an image attachment is provided, uses Gemini Vision to analyse it and incorporate
+ * the visual design intent into the generated code.
  */
 async function generateSubtaskCode(
   ai: GoogleGenAI | AiBinding | null,
@@ -621,7 +656,8 @@ async function generateSubtaskCode(
   targetPath: string,
   currentFiles: FileNode[],
   conversationHistory: Message[],
-  previousError?: string
+  previousError?: string,
+  attachment?: { name: string; type: string; data: string; size: number } | null
 ): Promise<string> {
   const workspaceContext = buildWorkspaceContext(currentFiles);
   const conversationContext = buildConversationContext(conversationHistory);
@@ -629,6 +665,34 @@ async function generateSubtaskCode(
   const errorContext = previousError
     ? `\n\nPREVIOUS ATTEMPT FAILED WITH ERROR — fix this on this attempt:\n${previousError}\n`
     : "";
+
+  // Vision context: if the user sent an image, describe it and include intent
+  let visionContext = "";
+  if (attachment && attachment.type.startsWith("image/") && attachment.data) {
+    visionContext = `\nThe user also provided an image (${attachment.name}) as a visual reference or design spec.`;
+    // Attempt Gemini Vision analysis (only available in Node / when Gemini client exists)
+    if (ai && typeof (ai as GoogleGenAI).models?.generateContent === "function") {
+      try {
+        const visionResponse = await (ai as GoogleGenAI).models.generateContent({
+          model: "gemini-1.5-flash",
+          contents: [
+            {
+              parts: [
+                { text: `Analyse this image and describe in detail: the layout, colour palette, typography, UI components, and overall visual design. Be specific and precise — your description will be used by a developer to replicate this design in code.` },
+                { inlineData: { mimeType: attachment.type as any, data: attachment.data } },
+              ],
+            },
+          ],
+        });
+        const description = visionResponse.text ?? "";
+        if (description) {
+          visionContext = `\n\n### Image Design Analysis (${attachment.name}):\n${description}\nUse this visual analysis to faithfully implement the design in the code you generate.\n`;
+        }
+      } catch (_) {
+        visionContext = `\nThe user provided an image (${attachment.name}) as visual reference. Implement the code to match the described visual intent.\n`;
+      }
+    }
+  }
 
   const systemInstruction = `You are an elite, senior software engineer with expert knowledge of TypeScript, React, Node.js, and modern web development. Your task is to write production-grade code.
 
@@ -643,7 +707,7 @@ CRITICAL REQUIREMENTS:
   const userContent = `Implement the file "${targetPath}" to fulfill: "${subtaskName}"
 Overall user request: "${prompt}"
 ${conversationContext}
-
+${visionContext}
 ${workspaceContext}`;
 
   // If Cloudflare Workers AI binding is passed
@@ -1013,11 +1077,11 @@ CRITICAL PATH RULES:
           } else {
             const freshFiles = await getFiles();
             
-            // First attempt
+            // First attempt — pass attachment for vision support
             try {
               code = await generateSubtaskCode(
                 cfAi || ai, route.model, prompt, sub.name, targetPath,
-                freshFiles, conversationHistory
+                freshFiles, conversationHistory, undefined, attachment
               );
             } catch (genErr: any) {
               generationError = genErr.message;
@@ -1028,32 +1092,20 @@ CRITICAL PATH RULES:
               try {
                 code = await generateSubtaskCode(
                   cfAi || ai, cfAi ? "@cf/meta/llama-3.3-70b-instruct-fp8-fast" : "gemini-3.6-flash", prompt, sub.name, targetPath,
-                  freshFiles, conversationHistory, generationError
+                  freshFiles, conversationHistory, generationError, attachment
                 );
                 generationError = undefined;
               } catch (retryErr: any) {
-                throw retryErr; // Surface to outer catch
+                throw retryErr;
               }
             }
           }
 
-          // Save to virtual DB
+          // Save to virtual DB (saveFile now writes to agent-workspace/ on disk)
           const fileNode: FileNode = { path: targetPath, content: code, language };
-          await saveFile(fileNode);
-
-          // Write to physical disk if writable, else rely on virtual D1/KV storage
-          try {
-            const dir = path.dirname(targetPath);
-            if (!fs.existsSync(dir)) {
-              fs.mkdirSync(dir, { recursive: true });
-            }
-            fs.writeFileSync(targetPath, code, "utf8");
-            sub.logs.push(`[SUCCESS] Wrote file to workspace: ${targetPath}`);
-            appendLogDrop("info", "workspace", `Wrote file ${targetPath}`);
-          } catch (_) {
-            sub.logs.push(`[INFO] Virtual D1/KV workspace stored: ${targetPath}`);
-            appendLogDrop("info", "workspace", `Virtual D1/KV stored ${targetPath}`);
-          }
+          await saveFile(fileNode);   // isolation handled inside saveFile
+          sub.logs.push(`[SUCCESS] Wrote file to agent-workspace: ${targetPath}`);
+          appendLogDrop("info", "workspace", `Wrote agent-workspace/${targetPath}`);
 
           broadcastSSE("file-created", fileNode);
           actionsTaken.push({ type: 'create_file', pathOrCommand: targetPath, success: true });
@@ -1078,16 +1130,13 @@ CRITICAL PATH RULES:
                 const freshFiles2 = await getFiles();
                 const fixedCode = await generateSubtaskCode(
                   cfAi || ai, route.model, prompt, sub.name, targetPath,
-                  freshFiles2, conversationHistory, errContext
+                  freshFiles2, conversationHistory, errContext, attachment
                 );
 
                 if (fixedCode && fixedCode !== code) {
                   const fixedNode: FileNode = { path: targetPath, content: fixedCode, language };
-                  await saveFile(fixedNode);
-                  try {
-                    fs.writeFileSync(targetPath, fixedCode, "utf8");
-                    sub.logs.push(`[RETRY] ✅ Auto-fixed and re-wrote: ${targetPath}`);
-                  } catch (_) {}
+                  await saveFile(fixedNode); // isolation handled inside saveFile → agent-workspace/
+                  sub.logs.push(`[RETRY] ✅ Auto-fixed and re-wrote: ${targetPath}`);
                   broadcastSSE("file-created", fixedNode);
                 }
               } catch (retryErr: any) {

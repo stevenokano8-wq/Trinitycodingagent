@@ -1,4 +1,35 @@
 {
-  "status": "success",
-  "message": "Simulated fallback for: Create a blue background "
+  "name": "trinity-coding-agent",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "worker:dev": "wrangler dev --config wrangler.api.toml --port 8787",
+    "worker:deploy": "wrangler deploy --config wrangler.api.toml",
+    "deploy:fe": "vite build && wrangler deploy --config wrangler.toml",
+    "deploy": "npm run build && npm run worker:deploy && npm run deploy:fe",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@cloudflare/agents": "^0.0.24",
+    "@google/genai": "^0.7.0",
+    "hono": "^4.6.14",
+    "lucide-react": "^0.454.0",
+    "motion": "^11.13.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/react": "^18.3.13",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "autoprefixer": "^10.4.20",
+    "tailwindcss": "^4.0.0",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.5",
+    "wrangler": "^3.100.0"
+  }
 }

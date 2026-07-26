@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { Play, RefreshCw, Smartphone, Monitor, ShieldAlert, ArrowLeft, ArrowRight, FolderOpen, Database, Sparkles, Terminal, CheckCircle2, Loader2, Activity, Cpu, Layers, ExternalLink, Code2, Eye } from "lucide-react";
+import { API_BASE } from "../lib/api";
 
 interface PreviewViewProps {
   currentPrompt: string;
@@ -20,10 +21,32 @@ export default function PreviewView({
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [forceLivePreview, setForceLivePreview] = useState(false);
 
+  // Bind HMR and live workspace refresh to real SSE compilation events
+  useEffect(() => {
+    const sseUrl = `${API_BASE}/api/agent/stream`;
+    const es = new EventSource(sseUrl);
+
+    es.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data.type === "workspace-compiled" || data.type === "task-update") {
+          setIsRefreshing(true);
+          setTimeout(() => setIsRefreshing(false), 200);
+        }
+      } catch (_) {}
+    };
+
+    es.onerror = () => {
+      es.close();
+    };
+
+    return () => es.close();
+  }, []);
+
   useEffect(() => {
     if (previewReloadKey > 0) {
       setIsRefreshing(true);
-      const timer = setTimeout(() => setIsRefreshing(false), 1200);
+      const timer = setTimeout(() => setIsRefreshing(false), 200);
       return () => clearTimeout(timer);
     }
   }, [previewReloadKey]);
@@ -37,10 +60,10 @@ export default function PreviewView({
   const activeTask = runningTask || tasks.find(t => t.status === "pending");
   const isAgentActive = isSending || !!runningTask;
   
-  const handleRefresh = () => {
+  const handleRefresh = useCallback(() => {
     setIsRefreshing(true);
-    setTimeout(() => setIsRefreshing(false), 800);
-  };
+    setTimeout(() => setIsRefreshing(false), 200);
+  }, []);
 
   // 1. Auto-detect UI Framework / Stack from file contents
   let detectedFramework = "React + Tailwind CSS";

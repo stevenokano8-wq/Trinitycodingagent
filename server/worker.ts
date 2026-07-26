@@ -47,6 +47,7 @@ app.use("*", cors());
 
 let dbStatus: DatabaseStatus = { d1: "local_fallback", kv: "local_fallback" };
 let initialized = false;
+let buildLockActive = false;
 
 async function ensureInit(env: Bindings) {
   if (initialized) return;
@@ -174,6 +175,7 @@ app.delete("/api/tasks", async (c) => {
 });
 
 app.post("/api/build", async (c) => {
+  if (buildLockActive) return c.json({ status: "busy", message: "Build already running" }, 429);
   await ensureInit(c.env);
   const buildBody = await c.req.json<{ prompt: string; attachment?: any }>().catch(() => ({ prompt: "" })) as { prompt: string; attachment?: any };
   const { prompt, attachment } = buildBody;
@@ -183,7 +185,8 @@ app.post("/api/build", async (c) => {
   };
   await addMessage(userMsg);
   broadcastSSE("message-added", userMsg);
-  executeAgentBuild(prompt, [], c.env, attachment).catch(console.error);
+  buildLockActive = true;
+  executeAgentBuild(prompt, [], c.env, attachment).catch(console.error).finally(() => { buildLockActive = false; });
   return c.json({ status: "started", messageId: userMsg.id });
 });
 

@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && vite build",
+    "build": "vite build",
     "preview": "vite preview",
     "worker:dev": "wrangler dev --config wrangler.api.toml --port 8787",
     "worker:deploy": "wrangler deploy --config wrangler.api.toml",

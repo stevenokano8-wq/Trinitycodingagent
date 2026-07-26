@@ -13,7 +13,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@cloudflare/agents": "^0.0.24",
+    "@cloudflare/agents": "^0.0.16",
     "@google/genai": "^0.7.0",
     "hono": "^4.6.14",
     "lucide-react": "^0.454.0",

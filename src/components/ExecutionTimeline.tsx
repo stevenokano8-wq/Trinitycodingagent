@@ -247,7 +247,7 @@ function buildTimeline(messages: Message[], tasks: Task[]): { timeline: Timeline
   // Header group
   groups["header"].messages.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
   for (const m of groups["header"].messages) timeline.push({ type: "message", id: m.id, timestamp: m.timestamp, data: m });
-  const visHdrTasks = groups["header"].tasks.filter((_, i) => i === 0 || _.status !== "pending");
+  const visHdrTasks = groups["header"].tasks;
   for (const t of visHdrTasks) timeline.push({ type: "task", id: t.id, timestamp: t.createdAt, data: t });
 
   // Per-user-message groups
@@ -256,7 +256,7 @@ function buildTimeline(messages: Message[], tasks: Task[]): { timeline: Timeline
     const grp = groups[u.id];
     timeline.push({ type: "message", id: u.id, timestamp: u.timestamp, data: u });
     const combined: Array<{ type: "task" | "message"; ts: number; data: Task | Message }> = [];
-    for (const t of grp.tasks.filter((_, i) => i === 0 || _.status !== "pending"))
+    for (const t of grp.tasks)
       combined.push({ type: "task", ts: new Date(t.createdAt).getTime(), data: t });
     for (const m of grp.messages) {
       const isTodo = m.content.includes("Master Task Itinerary") || m.content.includes("[Task-1]") || m.content.includes("todo");

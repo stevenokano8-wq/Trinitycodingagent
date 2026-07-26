@@ -4,10 +4,167 @@ import { saveTask, saveFile, addMessage, getFiles, getMessages, getTasks } from 
 import { executeGitPush } from "./github.js";
 import { AppEnv, AiBinding, AiChatMessage, extractCfAiText, resolveEnvWithOverrides } from "./env.js";
 import { routeLLMTask } from "./llmRouter.js";
-import { executeTerminalCommand, isCommandSafe } from "./command.js";
+import { executeTerminalCommand, isCommandSafe, preComplianceLintCheck } from "./command.js";
 import { appendLogDrop } from "./logger.js";
 import fs from "fs";
 import path from "path";
+
+// ---------------------------------------------------------------------------
+// Pillar 2: Abstract Syntax Tree (AST) & Symbol Dependency Graphing
+// ---------------------------------------------------------------------------
+export interface ASTNodeInfo {
+  symbol: string;
+  filePath: string;
+  kind: "function" | "class" | "interface" | "type" | "const" | "enum";
+  dependencies: string[];
+}
+
+export function buildASTGraph(files: FileNode[]): Map<string, ASTNodeInfo[]> {
+  const graph = new Map<string, ASTNodeInfo[]>();
+  for (const file of files) {
+    if (!file.path.endsWith(".ts") && !file.path.endsWith(".tsx") && !file.path.endsWith(".js") && !file.path.endsWith(".jsx")) {
+      continue;
+    }
+    const nodes: ASTNodeInfo[] = [];
+    const imports: string[] = [];
+
+    const importMatches = file.content.matchAll(/import\s+(?:\{([^}]+)\}|(\w+))\s+from\s+["']([^"']+)["']/g);
+    for (const match of importMatches) {
+      if (match[1]) {
+        match[1].split(",").forEach(s => imports.push(s.trim().split(" as ")[0]));
+      } else if (match[2]) {
+        imports.push(match[2].trim());
+      }
+    }
+
+    const exportMatches = file.content.matchAll(/export\s+(function|class|interface|type|const|enum)\s+(\w+)/g);
+    for (const match of exportMatches) {
+      const kind = match[1] as any;
+      const symbol = match[2];
+      nodes.push({
+        symbol,
+        filePath: file.path,
+        kind,
+        dependencies: imports.filter(imp => imp !== symbol)
+      });
+    }
+
+    graph.set(file.path, nodes);
+  }
+  return graph;
+}
+
+export async function fetchSymbolDependencies(symbolName: string): Promise<ASTNodeInfo[]> {
+  const files = await getFiles();
+  const graph = buildASTGraph(files);
+  const matched: ASTNodeInfo[] = [];
+  for (const [, nodes] of graph.entries()) {
+    for (const node of nodes) {
+      if (node.symbol.toLowerCase() === symbolName.toLowerCase() || node.dependencies.includes(symbolName)) {
+        matched.push(node);
+      }
+    }
+  }
+  return matched;
+}
+
+// ---------------------------------------------------------------------------
+// Pillar 5: Multi-Agent File Write Locks & Snapshot Rollback
+// ---------------------------------------------------------------------------
+const fileWriteLocks = new Map<string, { agentId: string; lockedAt: string }>();
+
+export function acquireFileLock(filePath: string, agentId: string): { acquired: boolean; currentOwner?: string } {
+  const normalized = filePath.replace(/^\/+/, "");
+  const existing = fileWriteLocks.get(normalized);
+  if (existing && existing.agentId !== agentId) {
+    return { acquired: false, currentOwner: existing.agentId };
+  }
+  fileWriteLocks.set(normalized, { agentId, lockedAt: new Date().toISOString() });
+  return { acquired: true };
+}
+
+export function releaseFileLock(filePath: string, agentId: string): boolean {
+  const normalized = filePath.replace(/^\/+/, "");
+  const existing = fileWriteLocks.get(normalized);
+  if (existing && existing.agentId === agentId) {
+    fileWriteLocks.delete(normalized);
+    return true;
+  }
+  return false;
+}
+
+export async function createCleanSnapshot(): Promise<Map<string, string>> {
+  const files = await getFiles();
+  const snapshot = new Map<string, string>();
+  for (const f of files) {
+    snapshot.set(f.path, f.content);
+  }
+  return snapshot;
+}
+
+export async function rollbackToCleanSnapshot(snapshot: Map<string, string>): Promise<void> {
+  for (const [filePath, content] of snapshot.entries()) {
+    await saveFile({ path: filePath, content, language: "typescript" });
+  }
+  appendLogDrop("info", "agent", "Restored virtual D1/KV workspace to clean state snapshot.");
+}
+
+// ---------------------------------------------------------------------------
+// Pillar 4: State-Suspended Human-In-The-Loop (HITL) Gates
+// ---------------------------------------------------------------------------
+export interface SuspendedExecutionFrame {
+  taskId: string;
+  subtaskId?: string;
+  reason: string;
+  lockedFileModified?: string;
+  failedAttempts: number;
+  memorySnapshot: any;
+  timestamp: string;
+  status: "SUSPENDED";
+}
+
+let activeSuspendedFrame: SuspendedExecutionFrame | null = null;
+
+export function getSuspendedFrame(): SuspendedExecutionFrame | null {
+  return activeSuspendedFrame;
+}
+
+export function suspendExecution(frame: SuspendedExecutionFrame): void {
+  activeSuspendedFrame = frame;
+  sseClients.forEach(res => {
+    try {
+      res.write(`data: ${JSON.stringify({ type: "agent_suspended", frame })}\n\n`);
+    } catch {
+      // ignore broken client writes
+    }
+  });
+  appendLogDrop("warn", "agent", `Execution suspended for task ${frame.taskId}: ${frame.reason}`);
+}
+
+export async function resumeSuspendedExecution(approved: boolean, note?: string): Promise<{ ok: boolean; message: string }> {
+  if (!activeSuspendedFrame) {
+    return { ok: false, message: "No active suspended execution frame found." };
+  }
+
+  const frame = activeSuspendedFrame;
+  if (!approved) {
+    activeSuspendedFrame = null;
+    sseClients.forEach(res => {
+      try {
+        res.write(`data: ${JSON.stringify({ type: "agent_resumed", approved: false, frame })}\n\n`);
+      } catch {}
+    });
+    return { ok: true, message: "Suspended execution rejected by user and terminated." };
+  }
+
+  activeSuspendedFrame = null;
+  sseClients.forEach(res => {
+    try {
+      res.write(`data: ${JSON.stringify({ type: "agent_resumed", approved: true, frame, note })}\n\n`);
+    } catch {}
+  });
+  return { ok: true, message: `Execution approved and rehydrated: ${note || 'User approved continuation.'}` };
+}
 
 let aiClient: GoogleGenAI | null = null;
 let aiClientKey: string | null = null;
@@ -1064,6 +1221,14 @@ CRITICAL PATH RULES:
             }
           }
 
+          // Acquire write lock for target file (Pillar 5: Multi-agent state reconciliation)
+          const lockResult = acquireFileLock(targetPath, sub.id);
+          if (!lockResult.acquired) {
+            sub.logs.push(`[LOCK CONFLICT] File ${targetPath} is currently locked by agent ${lockResult.currentOwner}`);
+            broadcastSSE("subtask_log", { subtaskId: sub.id, log: sub.logs[sub.logs.length - 1] });
+            throw new Error(`File write lock conflict for ${targetPath}`);
+          }
+
           // Create parent folders
           const folder = path.dirname(targetPath);
           actionsTaken.push({ type: 'create_folder', pathOrCommand: folder, success: true });
@@ -1096,8 +1261,20 @@ CRITICAL PATH RULES:
                 );
                 generationError = undefined;
               } catch (retryErr: any) {
+                releaseFileLock(targetPath, sub.id);
                 throw retryErr;
               }
+            }
+          }
+
+          // Pre-compliance security lint gate (Pillar 3)
+          if (code) {
+            const complianceCheck = preComplianceLintCheck(code, targetPath);
+            if (!complianceCheck.safe) {
+              sub.logs.push(`[COMPLIANCE GATE] Security violation detected: ${complianceCheck.violations.join("; ")}`);
+              broadcastSSE("subtask_log", { subtaskId: sub.id, log: sub.logs[sub.logs.length - 1] });
+              releaseFileLock(targetPath, sub.id);
+              throw new Error(`Pre-compliance security check failed: ${complianceCheck.violations.join("; ")}`);
             }
           }
 
@@ -1106,6 +1283,8 @@ CRITICAL PATH RULES:
           await saveFile(fileNode);   // isolation handled inside saveFile
           sub.logs.push(`[SUCCESS] Wrote file to agent-workspace: ${targetPath}`);
           appendLogDrop("info", "workspace", `Wrote agent-workspace/${targetPath}`);
+
+          releaseFileLock(targetPath, sub.id);
 
           broadcastSSE("file-created", fileNode);
           actionsTaken.push({ type: 'create_file', pathOrCommand: targetPath, success: true });

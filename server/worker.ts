@@ -16,7 +16,9 @@ import { initCache, cacheFlush } from "./cache.js";
 import { getLogDrops, clearLogDrops } from "./logger.js";
 import {
   planBuildTasks, executeAgentBuild, sseClients, broadcastSSE, cancelActiveBuild,
+  getSuspendedFrame, resumeSuspendedExecution, fetchSymbolDependencies, buildASTGraph
 } from "./agent.js";
+import { executeTerminalCommand } from "./command.js";
 import { getGithubConfig, saveGithubConfig, executeGitPush, executeGitPullRequest } from "./github.js";
 import { AppEnv, QueueMessage, MessageBatch, setRuntimeOverrides, resolveEnvWithOverrides } from "./env.js";
 import { DatabaseStatus, Message, FileNode, Task } from "../src/types.js";
@@ -274,6 +276,55 @@ app.post("/api/settings/github", async (c) => {
 app.get("/api/github/config", async (c) => {
   const config = await getGithubConfig(c.env);
   return c.json(config);
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  HITL GATES, AST GRAPH, & SANDBOX COMPUTE (PILLARS 1, 2, 3, 4, 5)
+// ══════════════════════════════════════════════════════════════════════════════
+
+app.get("/api/agent/suspended", async (c) => {
+  const frame = getSuspendedFrame();
+  return c.json({ suspended: !!frame, frame });
+});
+
+app.post("/api/agent/approve", async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as { note?: string };
+  const res = await resumeSuspendedExecution(true, body.note);
+  return c.json(res);
+});
+
+app.post("/api/agent/reject", async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as { note?: string };
+  const res = await resumeSuspendedExecution(false, body.note);
+  return c.json(res);
+});
+
+app.get("/api/agent/dependencies", async (c) => {
+  const symbol = c.req.query("symbol");
+  if (symbol) {
+    const deps = await fetchSymbolDependencies(symbol);
+    return c.json({ symbol, dependencies: deps });
+  }
+  const files = await getFiles();
+  const graph = buildASTGraph(files);
+  const result: Record<string, any> = {};
+  for (const [p, nodes] of graph.entries()) {
+    result[p] = nodes;
+  }
+  return c.json({ graph: result });
+});
+
+app.post("/api/command/sandbox", async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as { command?: string; cwd?: string };
+  if (!body.command) return c.json({ error: "command is required" }, 400);
+
+  const res = await executeTerminalCommand(body.command, {
+    cwd: body.cwd,
+    onStream: (chunk) => {
+      broadcastSSE("terminal-output", chunk);
+    }
+  });
+  return c.json(res);
 });
 
 // ══════════════════════════════════════════════════════════════════════════════

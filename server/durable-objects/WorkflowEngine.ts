@@ -21,7 +21,7 @@
 import { AppEnv } from "../env.js";
 
 type StepStatus = "pending" | "running" | "done" | "failed" | "awaiting_approval";
-type WorkflowStatus = "pending" | "running" | "done" | "failed" | "paused" | "cancelled";
+type WorkflowStatus = "pending" | "running" | "done" | "failed" | "paused" | "cancelled" | "SUSPENDED";
 
 interface StepDef {
   id: string;

@@ -20,8 +20,35 @@ const BANNED_KEYWORDS = [
   "yes"
 ];
 
+// Egress exfiltration and reverse shell protection patterns
+const EGRESS_EXFILTRATION_PATTERNS = [
+  /bash\s+-i/i,
+  /sh\s+-i/i,
+  /\/dev\/tcp\//i,
+  /\/dev\/udp\//i,
+  /\bnc\s+-[eE]/i,
+  /\bnetcat\b/i,
+  /\bcurl\b.*(-F|--form|-d|--data).*@/i,
+  /\bwget\b.*--post-file/i,
+  /python[0-9.]*\s+-c.*socket/i,
+  /perl\s+-e.*socket/i,
+  /ruby\s+-e.*TCPSocket/i,
+  /\bexec\s+5<>\/dev\/tcp/i,
+];
+
+// Pre-compliance hardcoded secrets patterns
+const HARDCODED_SECRET_PATTERNS = [
+  { name: "AWS Access Key", pattern: /AKIA[0-9A-Z]{16}/ },
+  { name: "GitHub Token", pattern: /ghp_[a-zA-Z0-9]{36}/ },
+  { name: "GitHub OAuth Token", pattern: /gho_[a-zA-Z0-9]{36}/ },
+  { name: "Private RSA/EC Key", pattern: /-----BEGIN\s+(RSA|EC|OPENSSH|DSA|PRIVATE)\s+KEY-----/ },
+  { name: "Stripe Secret Key", pattern: /sk_live_[0-9a-zA-Z]{24,}/ },
+  { name: "Google Gemini API Key", pattern: /AIzaSy[0-9a-zA-Z_-]{33}/ },
+  { name: "Generic Secret Key", pattern: /(api_key|secret_key|private_key|auth_token)\s*=\s*["'][a-zA-Z0-9_\-]{20,}["']/i },
+];
+
 /**
- * Checks if a command is secure to execute.
+ * Checks if a command is secure to execute (Pillar 3: Guardrails & Egress Protection).
  */
 export function isCommandSafe(command: string): { safe: boolean; reason?: string } {
   const trimmed = command.trim();
@@ -39,6 +66,13 @@ export function isCommandSafe(command: string): { safe: boolean; reason?: string
     return { safe: false, reason: "Relative directory traversal in file modification commands is prohibited." };
   }
 
+  // Egress protection & reverse shell prevention
+  for (const pattern of EGRESS_EXFILTRATION_PATTERNS) {
+    if (pattern.test(trimmed)) {
+      return { safe: false, reason: "Potential reverse shell or data exfiltration pattern detected." };
+    }
+  }
+
   // Keyword check for interactive or privilege elevation tools
   const words = trimmed.toLowerCase().split(/[\s|;&()<>`!$]+/);
   for (const word of words) {
@@ -48,6 +82,39 @@ export function isCommandSafe(command: string): { safe: boolean; reason?: string
   }
 
   return { safe: true };
+}
+
+/**
+ * Pre-compliance lint gate for code before writing/committing (Pillar 3).
+ * Detects hardcoded secrets, dangerous egress patterns, and infinite runtime loops.
+ */
+export function preComplianceLintCheck(code: string, filePath?: string): { safe: boolean; violations: string[] } {
+  const violations: string[] = [];
+
+  // 1. Hardcoded API secrets check
+  for (const secretCheck of HARDCODED_SECRET_PATTERNS) {
+    if (secretCheck.pattern.test(code)) {
+      violations.push(`Hardcoded secret detected: ${secretCheck.name}. Use process.env variables instead.`);
+    }
+  }
+
+  // 2. Infinite runtime loop patterns without break/exit
+  if (/\bwhile\s*\(\s*true\s*\)\s*\{(?![\s\S]*?\bbreak\b)/.test(code) ||
+      /\bfor\s*\(\s*;\s*;\s*\)\s*\{(?![\s\S]*?\bbreak\b)/.test(code)) {
+    violations.push("Potential unbounded infinite loop detected without a clear break condition.");
+  }
+
+  // 3. Egress or eval abuse check inside non-test source files
+  if (filePath && !filePath.includes("test") && !filePath.includes("spec")) {
+    if (/\beval\s*\(/.test(code)) {
+      violations.push("Usage of 'eval()' is prohibited due to remote code execution risks.");
+    }
+  }
+
+  return {
+    safe: violations.length === 0,
+    violations,
+  };
 }
 
 // Cached dynamic modules to prevent overhead on multiple calls
@@ -83,11 +150,15 @@ async function getPathModule(): Promise<any> {
 
 /**
  * Executes a terminal command securely and isomorphically.
- * If run inside Cloudflare Workers, it gracefully reports a support error.
+ * Streams stdout/stderr via callback if provided.
  */
 export async function executeTerminalCommand(
   command: string,
-  options?: { timeoutMs?: number; cwd?: string }
+  options?: { 
+    timeoutMs?: number; 
+    cwd?: string; 
+    onStream?: (data: { stdout?: string; stderr?: string }) => void 
+  }
 ): Promise<CommandResult> {
   const cp = await getChildProcess();
   if (!cp) {
@@ -111,7 +182,7 @@ export async function executeTerminalCommand(
     };
   }
 
-  // 1. Security validation: banned commands
+  // 1. Security validation: banned commands & egress check
   const safetyCheck = isCommandSafe(command);
   if (!safetyCheck.safe) {
     return {
@@ -169,6 +240,19 @@ export async function executeTerminalCommand(
         });
       }
     );
+
+    if (options?.onStream) {
+      if (child.stdout) {
+        child.stdout.on("data", (chunk: any) => {
+          options.onStream?.({ stdout: String(chunk) });
+        });
+      }
+      if (child.stderr) {
+        child.stderr.on("data", (chunk: any) => {
+          options.onStream?.({ stderr: String(chunk) });
+        });
+      }
+    }
 
     // Hard fallback backup timeout to ensure process is reaped
     setTimeout(() => {

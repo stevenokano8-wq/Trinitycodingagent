@@ -33,9 +33,39 @@ interface LocalDbSchema {
   files:    FileNode[];
 }
 
+const LOCAL_DB_FILE = path.join(AGENT_WORKSPACE_DIR, ".db_store.json");
 let localDb: LocalDbSchema = { messages: [], tasks: [], files: [] };
 let db: D1Database | null = null;
 let useLocalMemory = true;
+
+function loadLocalDb(): void {
+  try {
+    if (fs.existsSync(LOCAL_DB_FILE)) {
+      const data = fs.readFileSync(LOCAL_DB_FILE, "utf8");
+      const parsed = JSON.parse(data);
+      if (parsed) {
+        localDb = {
+          messages: Array.isArray(parsed.messages) ? parsed.messages : [],
+          tasks: Array.isArray(parsed.tasks) ? parsed.tasks : [],
+          files: Array.isArray(parsed.files) ? parsed.files : [],
+        };
+      }
+    }
+  } catch (err: any) {
+    console.warn("[DB] Failed to load disk-backed local store:", err.message);
+  }
+}
+
+function saveLocalDb(): void {
+  try {
+    if (!fs.existsSync(AGENT_WORKSPACE_DIR)) {
+      fs.mkdirSync(AGENT_WORKSPACE_DIR, { recursive: true });
+    }
+    fs.writeFileSync(LOCAL_DB_FILE, JSON.stringify(localDb, null, 2), "utf8");
+  } catch (err: any) {
+    console.warn("[DB] Failed to save disk-backed local store:", err.message);
+  }
+}
 
 const SCHEMA_STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS messages (
@@ -82,9 +112,10 @@ export async function initDb(env?: Partial<AppEnv>): Promise<DatabaseStatus> {
   const resolved = resolveEnvWithOverrides(env);
 
   if (!resolved.DB) {
-    console.log("[DB] No D1 binding. Using in-memory persistence.");
+    console.log("[DB] No D1 binding. Using disk-backed local persistence.");
     useLocalMemory = true;
     db = null;
+    loadLocalDb();
     return { d1: "local_fallback", kv: "local_fallback" };
   }
 
@@ -98,9 +129,10 @@ export async function initDb(env?: Partial<AppEnv>): Promise<DatabaseStatus> {
     console.log("[DB] Connected to Cloudflare D1.");
     return { d1: "connected", kv: "local_fallback" };
   } catch (err: any) {
-    console.error("[DB] D1 init error, falling back to in-memory:", err.message);
+    console.error("[DB] D1 init error, falling back to disk-backed local store:", err.message);
     useLocalMemory = true;
     db = null;
+    loadLocalDb();
     return { d1: "error", kv: "local_fallback" };
   }
 }
@@ -130,7 +162,11 @@ export async function getMessages(): Promise<Message[]> {
 }
 
 export async function addMessage(msg: Message): Promise<void> {
-  if (useLocalMemory || !db) { localDb.messages.push(msg); return; }
+  if (useLocalMemory || !db) {
+    localDb.messages.push(msg);
+    saveLocalDb();
+    return;
+  }
   try {
     await db.prepare(`
       INSERT INTO messages (id, role, content, timestamp, task_id, actions_taken, thought_time_seconds, model_name, duration_seconds, attachment)
@@ -148,11 +184,16 @@ export async function addMessage(msg: Message): Promise<void> {
   } catch (err) {
     console.error("[DB] Failed to insert message:", err);
     localDb.messages.push(msg);
+    saveLocalDb();
   }
 }
 
 export async function clearMessages(): Promise<void> {
-  if (useLocalMemory || !db) { localDb.messages = []; return; }
+  if (useLocalMemory || !db) {
+    localDb.messages = [];
+    saveLocalDb();
+    return;
+  }
   try { await db.prepare("DELETE FROM messages").run(); } catch (err) { console.error("[DB] Failed to clear messages:", err); }
 }
 
@@ -162,7 +203,7 @@ export async function getTasks(): Promise<Task[]> {
   if (useLocalMemory || !db) return localDb.tasks;
   try {
     const taskRows    = await db.prepare("SELECT * FROM tasks ORDER BY created_at ASC").all<any>();
-    const subtaskRows = await db.prepare("SELECT * FROM subtasks ORDER BY started_at ASC").all<any>();
+    const subtaskRows = await db.prepare("SELECT * FROM subtasks ORDER BY id ASC").all<any>();
     const subtaskMap: Record<string, Subtask[]> = {};
     for (const row of subtaskRows.results || []) {
       if (!subtaskMap[row.task_id]) subtaskMap[row.task_id] = [];
@@ -188,6 +229,7 @@ export async function saveTask(task: Task): Promise<void> {
   if (useLocalMemory || !db) {
     const idx = localDb.tasks.findIndex(t => t.id === task.id);
     if (idx >= 0) localDb.tasks[idx] = task; else localDb.tasks.push(task);
+    saveLocalDb();
     return;
   }
   try {
@@ -220,7 +262,11 @@ export async function saveTask(task: Task): Promise<void> {
 }
 
 export async function deleteTasks(): Promise<void> {
-  if (useLocalMemory || !db) { localDb.tasks = []; return; }
+  if (useLocalMemory || !db) {
+    localDb.tasks = [];
+    saveLocalDb();
+    return;
+  }
   try {
     await db.prepare("DELETE FROM subtasks").run();
     await db.prepare("DELETE FROM tasks").run();
@@ -245,6 +291,7 @@ export async function saveFile(file: FileNode): Promise<void> {
   if (useLocalMemory || !db) {
     const idx = localDb.files.findIndex(f => f.path === file.path);
     if (idx >= 0) localDb.files[idx] = file; else localDb.files.push(file);
+    saveLocalDb();
   } else {
     try {
       const check = await db.prepare("SELECT path FROM files WHERE path = ?").bind(file.path).first();
@@ -282,7 +329,11 @@ export async function saveFile(file: FileNode): Promise<void> {
 }
 
 export async function clearFiles(): Promise<void> {
-  if (useLocalMemory || !db) { localDb.files = []; return; }
+  if (useLocalMemory || !db) {
+    localDb.files = [];
+    saveLocalDb();
+    return;
+  }
   try { await db.prepare("DELETE FROM files").run(); } catch (err) { console.error("[DB] Failed to clear files:", err); }
 }
 

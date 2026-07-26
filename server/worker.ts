@@ -252,7 +252,7 @@ app.post("/api/settings", async (c) => {
 
 /** Generic env variable setter (for EnvBoxView custom keys) */
 app.post("/api/settings/env", async (c) => {
-  const { key, value } = await c.req.json<{ key?: string; value?: string }>().catch(() => ({}));
+  const { key, value } = (await c.req.json().catch(() => ({}))) as { key?: string; value?: string };
   if (!key || !value) return c.json({ error: "key and value required" }, 400);
   const overrides: Record<string, string> = { [key]: value };
   setRuntimeOverrides(overrides as any);
@@ -281,7 +281,7 @@ app.get("/api/github/config", async (c) => {
 // ══════════════════════════════════════════════════════════════════════════════
 
 app.post("/api/clone-repo", async (c) => {
-  const body = await c.req.json<{ repoUrl?: string; token?: string; targetDir?: string }>().catch(() => ({}));
+  const body = (await c.req.json().catch(() => ({}))) as { repoUrl?: string; token?: string; targetDir?: string };
   const { repoUrl, token, targetDir } = body;
   if (!repoUrl) return c.json({ ok: false, error: "repoUrl is required" }, 400);
 

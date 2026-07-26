@@ -198,7 +198,7 @@ export default function App() {
       case "github":      return <GithubView sessionId={sessionId} />;
       case "env":         return <EnvBoxView />;
       case "logs":        return <LogsView dbStatus={dbStatus} files={files} tasks={tasks} onRefresh={fetchDbStatus} />;
-      case "db":          return <DbVisualizer />;
+      case "db":          return <DbVisualizer messages={messages} tasks={tasks} files={files} onPurge={() => {}} />;
       case "deploy":      return <DeployView />;
       case "supabase":    return <SupabaseView />;
       case "screenshots": return <ScreenshotsView />;

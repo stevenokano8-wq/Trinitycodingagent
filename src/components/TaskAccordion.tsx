@@ -397,18 +397,26 @@ const SubtaskAccordionItem = React.memo(function SubtaskAccordionItem({
 });
 
 interface TaskAccordionProps {
-  task: Task;
+  task?: Task;
+  tasks?: Task[];
+  files?: any[];
+  currentPrompt?: string;
   isInitiallyExpanded?: boolean;
   isLocked?: boolean;
   taskIndex?: number;
 }
 
-export default function TaskAccordion({ 
+function SingleTaskAccordion({ 
   task, 
   isInitiallyExpanded = false, 
   isLocked = false, 
   taskIndex = 1 
-}: TaskAccordionProps) {
+}: {
+  task: Task;
+  isInitiallyExpanded?: boolean;
+  isLocked?: boolean;
+  taskIndex?: number;
+}) {
   const [isExpanded, setIsExpanded] = useState(isInitiallyExpanded || task.status === "running" || task.status === "pending");
 
   useEffect(() => {
@@ -579,6 +587,41 @@ export default function TaskAccordion({
         )}
       </AnimatePresence>
     </div>
+  );
+}
+
+export default function TaskAccordion({ 
+  task, 
+  tasks,
+  isInitiallyExpanded = false, 
+  isLocked = false, 
+  taskIndex = 1 
+}: TaskAccordionProps) {
+  if (tasks && tasks.length > 0) {
+    return (
+      <div className="space-y-4">
+        {tasks.map((t, idx) => (
+          <SingleTaskAccordion
+            key={t.id || idx}
+            task={t}
+            taskIndex={idx + 1}
+            isInitiallyExpanded={idx === tasks.length - 1 || t.status === "running"}
+            isLocked={isLocked}
+          />
+        ))}
+      </div>
+    );
+  }
+
+  if (!task) return null;
+
+  return (
+    <SingleTaskAccordion
+      task={task}
+      taskIndex={taskIndex}
+      isInitiallyExpanded={isInitiallyExpanded}
+      isLocked={isLocked}
+    />
   );
 }
 

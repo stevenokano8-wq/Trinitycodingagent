@@ -198,10 +198,12 @@ export function resolveEnvWithOverrides(env?: Partial<AppEnv>): Partial<AppEnv> 
   const nodeEnv: Record<string, any> = {};
   if (typeof process !== "undefined" && process.env) {
     if (process.env.GEMINI_API_KEY) nodeEnv.GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+    if (process.env.DEEPSEEK_API_KEY) nodeEnv.DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY;
+    if (process.env.OPENAI_API_KEY) nodeEnv.OPENAI_API_KEY = process.env.OPENAI_API_KEY;
     if (process.env.GITHUB_TOKEN) nodeEnv.GITHUB_TOKEN = process.env.GITHUB_TOKEN;
     if (process.env.GITHUB_REPO_URL) nodeEnv.GITHUB_REPO_URL = process.env.GITHUB_REPO_URL;
-    if (process.env.CLOUDFLARE_ACCOUNT_ID) nodeEnv.CLOUDFLARE_ACCOUNT_ID = process.env.CLOUDFLARE_ACCOUNT_ID;
-    if (process.env.CLOUDFLARE_API_TOKEN) nodeEnv.CLOUDFLARE_API_TOKEN = process.env.CLOUDFLARE_API_TOKEN;
+    if (process.env.CLOUDFLARE_ACCOUNT_ID || process.env.CF_ACCOUNT_ID) nodeEnv.CLOUDFLARE_ACCOUNT_ID = process.env.CLOUDFLARE_ACCOUNT_ID || process.env.CF_ACCOUNT_ID;
+    if (process.env.CLOUDFLARE_API_TOKEN || process.env.CF_API_TOKEN) nodeEnv.CLOUDFLARE_API_TOKEN = process.env.CLOUDFLARE_API_TOKEN || process.env.CF_API_TOKEN;
     if (process.env.UPSTASH_REDIS_REST_URL) nodeEnv.UPSTASH_REDIS_REST_URL = process.env.UPSTASH_REDIS_REST_URL;
     if (process.env.UPSTASH_REDIS_REST_TOKEN) nodeEnv.UPSTASH_REDIS_REST_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN;
   }

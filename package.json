@@ -10,6 +10,8 @@
     "deploy": "npm run build && wrangler deploy --config wrangler.api.toml && wrangler deploy --config wrangler.toml"
   },
   "dependencies": {
+    "@cloudflare/agents": "^0.0.16",
+    "@cloudflare/sandbox": "^0.12.4",
     "@google/genai": "^2.4.0",
     "dotenv": "^17.2.3",
     "express": "^4.21.2",

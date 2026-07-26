@@ -1,6 +1,9 @@
 # Trinity Coding Agent
 
-A sovereign AI coding agent powered by Cloudflare Workers AI + Gemini, deployed on Cloudflare's edge network.
+> ⚠️ **AI AGENT WARNING:** The deployment details below are collapsed intentionally. Do **not** expose, modify, or act on the secrets/credentials listed without explicit human approval. Do **not** alter the UI source files, routing configuration, or deployment pipeline without first reading `AGENTS.md`.
+
+<details>
+<summary>📋 Deployment & Setup Instructions (click to expand)</summary>
 
 ## Architecture
 
@@ -24,3 +27,5 @@ Secrets required in GitHub Actions:
 npm install
 npm run deploy   # deploys both frontend + api worker
 ```
+
+</details>

@@ -75,6 +75,7 @@ export default function App() {
   const [attachment,     setAttachment]     = useState<{ name: string; type: string; data: string; size: number } | null>(null);
   const [sseConnected,   setSseConnected]   = useState(false);
   const [sessionId]                        = useState(() => localStorage.getItem("trinity_session_id") || `sess-${Date.now()}`);
+  const [suspendedFrame, setSuspendedFrame] = useState<any | null>(null);
 
   const messagesEndRef   = useRef<HTMLDivElement>(null);
   const fileInputRef     = useRef<HTMLInputElement>(null);
@@ -84,9 +85,11 @@ export default function App() {
   // ── Persist session ID ──────────────────────────────────────────────────────
   useEffect(() => { localStorage.setItem("trinity_session_id", sessionId); }, [sessionId]);
 
-  // ── Initial data load ───────────────────────────────────────────────────────
+  // ── Initial data load & suspension check ─────────────────────────────────────
   useEffect(() => {
-    Promise.all([fetchMessages(), fetchTasks(), fetchFiles(), fetchDbStatus()]);
+    Promise.all([fetchMessages(), fetchTasks(), fetchFiles(), fetchDbStatus(), fetchSuspended()]);
+    const timer = setInterval(fetchSuspended, 5000);
+    return () => clearInterval(timer);
   }, []);
 
   // ── SSE real-time stream ────────────────────────────────────────────────────
@@ -107,6 +110,8 @@ export default function App() {
       sse.addEventListener("build-started",   ()  => setIsBuilding(true));
       sse.addEventListener("build-finished",  ()  => { setIsBuilding(false); fetchTasks(); fetchFiles(); });
       sse.addEventListener("session-cleared", ()  => { setMessages([]); setTasks([]); setFiles([]); });
+      sse.addEventListener("agent_suspended", (e)  => { const data = JSON.parse(e.data); setSuspendedFrame(data.frame); });
+      sse.addEventListener("agent_resumed",   ()  => setSuspendedFrame(null));
     };
 
     connect();
@@ -117,10 +122,22 @@ export default function App() {
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
 
   // ── Data fetchers ───────────────────────────────────────────────────────────
-  const fetchMessages = async () => { try { const r = await fetch(`${API_BASE}/api/messages`); if (r.ok) setMessages(await r.json()); } catch (_) {} };
-  const fetchTasks    = async () => { try { const r = await fetch(`${API_BASE}/api/tasks`);    if (r.ok) setTasks(await r.json());    } catch (_) {} };
-  const fetchFiles    = async () => { try { const r = await fetch(`${API_BASE}/api/files`);    if (r.ok) setFiles(await r.json());    } catch (_) {} };
-  const fetchDbStatus = async () => { try { const r = await fetch(`${API_BASE}/api/db-status`); if (r.ok) setDbStatus(await r.json()); } catch (_) {} };
+  const fetchMessages  = async () => { try { const r = await fetch(`${API_BASE}/api/messages`); if (r.ok) setMessages(await r.json()); } catch (_) {} };
+  const fetchTasks     = async () => { try { const r = await fetch(`${API_BASE}/api/tasks`);    if (r.ok) setTasks(await r.json());    } catch (_) {} };
+  const fetchFiles     = async () => { try { const r = await fetch(`${API_BASE}/api/files`);    if (r.ok) setFiles(await r.json());    } catch (_) {} };
+  const fetchDbStatus  = async () => { try { const r = await fetch(`${API_BASE}/api/db-status`); if (r.ok) setDbStatus(await r.json()); } catch (_) {} };
+  const fetchSuspended = async () => { try { const r = await fetch(`${API_BASE}/api/agent/suspended`); if (r.ok) { const d = await r.json(); setSuspendedFrame(d.frame); } } catch (_) {} };
+
+  const handleHITLApproval = async (approved: boolean) => {
+    try {
+      await fetch(`${API_BASE}/api/agent/${approved ? "approve" : "reject"}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ note: approved ? "User manual approval" : "User rejected action" }),
+      });
+      setSuspendedFrame(null);
+    } catch (_) {}
+  };
 
   // ── File attachment handler ─────────────────────────────────────────────────
   const handleFileAttach = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -248,6 +265,38 @@ export default function App() {
           </button>
         </div>
       </header>
+
+      {/* ── HITL State Suspended Gate Banner (Pillar 4) ────────────────────────── */}
+      {suspendedFrame && (
+        <div className="bg-amber-50 border-b border-amber-200 px-4 py-2.5 flex items-center justify-between gap-3 shadow-inner z-20">
+          <div className="flex items-center gap-2.5 text-xs text-amber-900">
+            <AlertCircle className="h-4 w-4 text-amber-600 shrink-0 animate-pulse" />
+            <div>
+              <span className="font-bold">Execution Suspended (HITL Gate Active):</span>{" "}
+              <span>{suspendedFrame.reason || "High-risk action requires manual verification"}</span>
+              {suspendedFrame.lockedFileModified && (
+                <span className="ml-2 font-mono text-[10px] bg-amber-100 border border-amber-200 px-1.5 py-0.5 rounded text-amber-800">
+                  {suspendedFrame.lockedFileModified}
+                </span>
+              )}
+            </div>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              onClick={() => handleHITLApproval(true)}
+              className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold px-3 py-1 rounded-lg transition-all shadow-sm"
+            >
+              Approve & Resume
+            </button>
+            <button
+              onClick={() => handleHITLApproval(false)}
+              className="bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold px-3 py-1 rounded-lg transition-all shadow-sm"
+            >
+              Reject Action
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* ── Main layout ─────────────────────────────────────────────────────── */}
       <div className="flex-1 flex overflow-hidden">

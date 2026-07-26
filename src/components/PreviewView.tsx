@@ -811,7 +811,56 @@ function CalculatorSimulator() {
 
   const calculate = () => {
     try {
-      const result = eval(equation + display);
+      const expression = `${equation}${display}`.trim();
+      if (!expression) {
+        setDisplay("0");
+        setEquation("");
+        return;
+      }
+
+      const tokens = expression.match(/\d+|[+\-*/]/g);
+      if (!tokens || tokens.length < 3) {
+        throw new Error("Invalid expression");
+      }
+
+      const values: number[] = [];
+      const ops: string[] = [];
+      const precedence: Record<string, number> = { "+": 1, "-": 1, "*": 2, "/": 2 };
+
+      const applyOp = () => {
+        const right = values.pop();
+        const left = values.pop();
+        const op = ops.pop();
+        if (left === undefined || right === undefined || !op) {
+          throw new Error("Invalid expression");
+        }
+        switch (op) {
+          case "+": values.push(left + right); break;
+          case "-": values.push(left - right); break;
+          case "*": values.push(left * right); break;
+          case "/": {
+            if (right === 0) throw new Error("Division by zero");
+            values.push(left / right);
+            break;
+          }
+          default: throw new Error("Unsupported operator");
+        }
+      };
+
+      for (const token of tokens) {
+        if (/^\d+$/.test(token)) {
+          values.push(Number(token));
+        } else {
+          while (ops.length && precedence[ops[ops.length - 1]] >= precedence[token]) {
+            applyOp();
+          }
+          ops.push(token);
+        }
+      }
+
+      while (ops.length) applyOp();
+      const result = values.pop();
+      if (result === undefined || values.length > 0) throw new Error("Invalid expression");
       setDisplay(String(result));
       setEquation("");
     } catch {

@@ -698,6 +698,9 @@ function buildPreviewHtml(files: FileNode[], jsFiles: FileNode[], cssFiles: File
 
   if (mainHtml) return mainHtml;
 
+  const entryPoint = files.find(f => f.path === "src/main.tsx" || f.path === "src/main.jsx")?.path
+    ?? files.find(f => f.path === "src/App.tsx" || f.path === "src/App.jsx")?.path
+    ?? null;
   const simpleParts = jsFiles.filter(f => !f.content.includes("import ") && !f.content.includes("require(")).map(f => f.content).join("\n\n");
 
   return `<!DOCTYPE html>
@@ -719,9 +722,11 @@ function buildPreviewHtml(files: FileNode[], jsFiles: FileNode[], cssFiles: File
 </head>
 <body>
   <div id="root"></div>
-  ${hasReact
-    ? `<script type="text/babel">${jsFiles.map(f => f.content).join("\n\n")}\n\nconst __root = ReactDOM.createRoot(document.getElementById("root"));\ntry { __root.render(React.createElement(App)); } catch(e) { document.getElementById("root").textContent = e.message; }</script>`
-    : `<script>${simpleParts}</script>`
+  ${entryPoint
+    ? `<script type="module" src="/${entryPoint}"></script>`
+    : hasReact
+      ? `<script type="text/babel">${jsFiles.map(f => f.content).join("\n\n")}\n\nconst __root = ReactDOM.createRoot(document.getElementById("root"));\ntry { __root.render(React.createElement(App)); } catch(e) { document.getElementById("root").textContent = e.message; }</script>`
+      : `<script>${simpleParts}</script>`
   }
 </body>
 </html>`;

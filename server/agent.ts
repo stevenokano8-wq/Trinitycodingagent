@@ -799,6 +799,40 @@ function synthesizeCodeLocally(
   return `// ${subtaskName}\n`;
 }
 
+export const CODE_GEN_SYSTEM_PROMPT = `You are an expert full-stack developer generating production-ready code for a user's application.
+
+CRITICAL ISOLATION & CONSTRAINTS:
+1. STRICT USER UI FOCUS: Generate ONLY the code and UI requested by the end user for their product.
+2. NO AGENT META-UI: DO NOT generate or render internal build statuses, execution pipelines, compilation dashboards, progress spinners, terminal outputs, or agent logs inside the application code.
+3. NO INTERNAL TERMINOLOGY: Words like "Sovereign Pipeline", "SSE Pipeline", "Compilation Tunnel", "Execution Status", or "Subtask" must NEVER appear inside user-facing components.
+4. CLEAN MOUNTING: Ensure component files export production-ready code meant to be rendered directly inside the root application container.
+`;
+
+export function buildCodeGenerationPrompt(originalUserPrompt: string, targetPath: string, subtaskTitle: string) {
+  const systemInstruction = `${CODE_GEN_SYSTEM_PROMPT}
+
+ADDITIONAL HARD RULES:
+- Write production-grade code that is self-contained and ready to render inside the application's root container.
+- Do not introduce mock agent dashboards, execution panels, or progress overlays.
+- Return only the runnable file content for the requested file.`;
+
+  const userContent = `[APPLICATION SPECIFICATION]
+User Goal: ${originalUserPrompt}
+
+[FILE GENERATION TARGET]
+Target File: ${targetPath}
+Internal Step Focus: ${subtaskTitle}
+
+[INSTRUCTIONS]
+Write the complete, non-truncated source code for "${targetPath}".
+- Respond ONLY with the valid, runnable file content within clean code blocks.
+- Focus strictly on the end-user application feature defined in the user goal.
+- Do NOT wrap the component in mock agent dashboards or status wrappers.
+`;
+
+  return { systemInstruction, userContent };
+}
+
 /**
  * Generate code for a subtask with full context — existing file contents + conversation history.
  * Supports both Cloudflare Workers AI binding and Google Gemini models.
@@ -851,9 +885,11 @@ async function generateSubtaskCode(
     }
   }
 
-  const systemInstruction = `You are an elite, senior software engineer with expert knowledge of TypeScript, React, Node.js, and modern web development. Your task is to write production-grade code.
+  const { systemInstruction: isolationSystemInstruction, userContent: isolationUserContent } = buildCodeGenerationPrompt(prompt, targetPath, subtaskName);
 
-CRITICAL REQUIREMENTS:
+  const systemInstruction = `${isolationSystemInstruction}
+
+ADDITIONAL IMPLEMENTATION REQUIREMENTS:
 1. INDENTATION & FORMATTING: Use consistent 2-space indentation. Clean, readable code.
 2. SYNTAX & COMPILATION: All imports must resolve correctly. Fix TypeScript errors, use precise types. No syntax errors.
 3. COMPLETENESS: Write the FULL, executable file content. NO truncation, NO "// ... implement rest", NO placeholder comments.
@@ -861,7 +897,9 @@ CRITICAL REQUIREMENTS:
 5. CONSISTENCY: Match the coding style and patterns already used in other workspace files.
 6. RESPONSE FORMAT: Output ONLY the raw code. DO NOT wrap in markdown code blocks. Start from the very first character.${errorContext}`;
 
-  const userContent = `Implement the file "${targetPath}" to fulfill: "${subtaskName}"
+  const userContent = `${isolationUserContent}
+
+[IMPLEMENTATION CONTEXT]
 Overall user request: "${prompt}"
 ${conversationContext}
 ${visionContext}

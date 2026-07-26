@@ -194,17 +194,31 @@ app.post("/api/build/cancel",    async (c) => { const { taskId = "" } = (await c
 app.post("/api/tasks/cancel",    async (c) => { const { taskId = "" } = (await c.req.json().catch(() => ({}))) as { taskId?: string }; await cancelActiveBuild(taskId); return c.json({ status: "cancelled" }); });
 app.post("/api/tasks/cancel-all", async (c) => { await cancelActiveBuild(); return c.json({ status: "cancelled" }); });
 
-app.get("/api/build/stream", async (c) => {
+const handleSseStream = async (c: any) => {
   const { readable, writable } = new TransformStream();
   const writer = writable.getWriter();
   const enc = new TextEncoder();
   sseClients.add(writer);
-  c.req.raw.signal.addEventListener("abort", () => { sseClients.delete(writer); writer.close().catch(() => {}); });
-  const hb = setInterval(() => { writer.write(enc.encode(": heartbeat\n\n")).catch(() => clearInterval(hb)); }, 20_000);
-  return new Response(readable, {
-    headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", "Connection": "keep-alive", "Access-Control-Allow-Origin": "*" },
+  c.req.raw.signal.addEventListener("abort", () => {
+    sseClients.delete(writer);
+    writer.close().catch(() => {});
   });
-});
+  const hb = setInterval(() => {
+    writer.write(enc.encode(": heartbeat\n\n")).catch(() => clearInterval(hb));
+  }, 20_000);
+  return new Response(readable, {
+    headers: {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      "Connection": "keep-alive",
+      "Access-Control-Allow-Origin": "*",
+    },
+  });
+};
+
+app.get("/api/build/stream", handleSseStream);
+app.get("/api/tasks/stream", handleSseStream);
+app.get("/api/agent/stream", handleSseStream);
 
 // ══════════════════════════════════════════════════════════════════════════════
 //  FILES

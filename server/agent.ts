@@ -1251,7 +1251,7 @@ async function generateSubtaskCode(
     if (ai && typeof (ai as GoogleGenAI).models?.generateContent === "function") {
       try {
         const visionResponse = await (ai as GoogleGenAI).models.generateContent({
-          model: "gemini-1.5-flash",
+          model: "gemini-2.0-flash",
           contents: [
             {
               parts: [

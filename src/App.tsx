@@ -1314,7 +1314,7 @@ export default function App() {
   }
 
   return (
-    <div className="h-screen max-h-screen h-[100dvh] max-h-[100dvh] bg-[#FFF5EC] flex flex-col font-sans select-none overflow-hidden antialiased">
+    <div className="h-screen max-h-screen h-[100dvh] max-h-[100dvh] bg-[#fafafa] flex flex-col font-sans select-none overflow-hidden antialiased">
       <input 
         type="file" 
         ref={fileInputRef} 

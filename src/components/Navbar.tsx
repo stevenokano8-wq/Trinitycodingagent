@@ -31,7 +31,6 @@ export type TabType =
   | "github"
   | "permissions"
   | "settings"
-  | "supabase"
   | "notifications"
   | "screenshots"
   | "simulation"
@@ -75,7 +74,6 @@ export default function Navbar({
     { id: "github",     name: "GitHub",              icon: Github,     color: "text-neutral-800" },
     { id: "permissions",name: "Permissions",         icon: ShieldCheck,color: "text-emerald-500" },
     { id: "settings",   name: "Settings",            icon: Settings,   color: "text-gray-600" },
-    { id: "supabase",   name: "Supabase",            icon: Zap,        color: "text-emerald-600" },
     { id: "notifications",name:"Notifications",      icon: Bell,       color: "text-red-500" },
     { id: "screenshots",name: "Screenshots",         icon: Camera,     color: "text-indigo-500" },
   ] as const;

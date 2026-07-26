@@ -222,35 +222,185 @@ async function runCfAiFast(
   return runCfAi(ai, messages, maxTokens, CF_FAST_MODEL);
 }
 
-// Convenience: run a planning prompt, preferring CF AI over Gemini Flash.
+/**
+ * Helper to detect rate limits, 429 status codes, and quota failure payloads
+ * from Gemini, Cloudflare Workers AI, and OpenAI/DeepSeek endpoints.
+ */
+export function isQuotaOrRateLimitError(err: any): boolean {
+  if (!err) return false;
+  const msg = (err.message || String(err) || "").toLowerCase();
+  const status = err.status || err.statusCode || err.code;
+
+  return (
+    status === 429 ||
+    status === "RESOURCE_EXHAUSTED" ||
+    msg.includes("429") ||
+    msg.includes("resource_exhausted") ||
+    msg.includes("quotafailure") ||
+    msg.includes("generativelanguage.googleapis.com") ||
+    msg.includes("rate limit") ||
+    msg.includes("ratelimit") ||
+    msg.includes("insufficient_quota") ||
+    msg.includes("quota exceeded") ||
+    msg.includes("quota_exceeded") ||
+    msg.includes("too many requests") ||
+    msg.includes("overloaded")
+  );
+}
+
+/**
+ * Executes LLM generation with automatic provider fallback on quota/rate-limit failures.
+ * Provider Sequence:
+ *   1. Primary Provider: Google Gemini API (gemini-3.6-flash / requested model)
+ *   2. Fallback Provider 1: Cloudflare Workers AI (@cf/meta/llama-3.3-70b-instruct-fp8-fast)
+ *   3. Fallback Provider 2: DeepSeek / OpenAI API endpoint
+ * 
+ * If ALL fallback providers fail or hit rate limits:
+ *   Throws hard exception `EXECUTION_FAILED_QUOTA_EXHAUSTED`.
+ */
+export async function generateWithFallback(
+  systemInstruction: string,
+  userContent: string,
+  env?: Partial<AppEnv>,
+  options?: {
+    model?: string;
+    maxTokens?: number;
+    subtaskId?: string;
+  }
+): Promise<string> {
+  const resolved = resolveEnvWithOverrides(env);
+  const requestedModel = options?.model || "gemini-3.6-flash";
+  const maxTokens = options?.maxTokens || 3500;
+  const errors: string[] = [];
+
+  // --- 1. Primary Provider: Gemini API ---
+  const gemini = getGeminiClient(env);
+  if (gemini) {
+    try {
+      const response = await gemini.models.generateContent({
+        model: requestedModel,
+        contents: userContent,
+        config: { systemInstruction }
+      });
+      const text = response.text?.trim() || "";
+      if (text) {
+        return text;
+      }
+    } catch (err: any) {
+      const isQuota = isQuotaOrRateLimitError(err);
+      const logMsg = `[QUOTA FALLBACK] Primary Gemini API failed (${isQuota ? "QUOTA_EXHAUSTED/429" : err.message}). Switching to Fallback Provider 1 (Cloudflare Workers AI)...`;
+      console.warn(logMsg);
+      if (options?.subtaskId) {
+        broadcastSSE("subtask_log", { subtaskId: options.subtaskId, log: logMsg });
+      }
+      errors.push(`Gemini API: ${err.message}`);
+    }
+  } else {
+    errors.push("Gemini API: Client uninitialized or key missing");
+  }
+
+  // --- 2. Fallback Provider 1: Cloudflare Workers AI ---
+  if (resolved.AI) {
+    try {
+      const messages: AiChatMessage[] = [
+        { role: "system", content: systemInstruction },
+        { role: "user", content: userContent }
+      ];
+      const text = await runCfAi(resolved.AI, messages, maxTokens, CF_CODE_MODEL);
+      if (text && text.trim()) {
+        const logMsg = `[PROVIDER SUCCESS] Code synthesized using Fallback Provider 1 (Cloudflare Workers AI).`;
+        console.log(logMsg);
+        if (options?.subtaskId) {
+          broadcastSSE("subtask_log", { subtaskId: options.subtaskId, log: logMsg });
+        }
+        return text.trim();
+      }
+    } catch (cfErr: any) {
+      const isQuota = isQuotaOrRateLimitError(cfErr);
+      const logMsg = `[QUOTA FALLBACK] Fallback Provider 1 (Cloudflare Workers AI) failed (${isQuota ? "RATE_LIMITED" : cfErr.message}). Switching to Fallback Provider 2 (DeepSeek/OpenAI)...`;
+      console.warn(logMsg);
+      if (options?.subtaskId) {
+        broadcastSSE("subtask_log", { subtaskId: options.subtaskId, log: logMsg });
+      }
+      errors.push(`Cloudflare Workers AI: ${cfErr.message}`);
+    }
+  } else {
+    errors.push("Cloudflare Workers AI: [AI] binding not present");
+  }
+
+  // --- 3. Fallback Provider 2: DeepSeek / OpenAI API ---
+  const deepseekKey = resolved.DEEPSEEK_API_KEY || (typeof process !== "undefined" ? process.env?.DEEPSEEK_API_KEY : undefined);
+  const openaiKey = resolved.OPENAI_API_KEY || (typeof process !== "undefined" ? process.env?.OPENAI_API_KEY : undefined);
+  const thirdPartyKey = deepseekKey || openaiKey;
+  const endpoint = deepseekKey
+    ? "https://api.deepseek.com/v1/chat/completions"
+    : "https://api.openai.com/v1/chat/completions";
+  const modelName = deepseekKey ? "deepseek-coder" : "gpt-4o-mini";
+
+  if (thirdPartyKey) {
+    try {
+      const res = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${thirdPartyKey}`
+        },
+        body: JSON.stringify({
+          model: modelName,
+          messages: [
+            { role: "system", content: systemInstruction },
+            { role: "user", content: userContent }
+          ],
+          max_tokens: maxTokens
+        })
+      });
+
+      if (!res.ok) {
+        const errText = await res.text();
+        throw new Error(`HTTP ${res.status}: ${errText.substring(0, 200)}`);
+      }
+
+      const data = await res.json() as any;
+      const content = data?.choices?.[0]?.message?.content?.trim();
+      if (content) {
+        const logMsg = `[PROVIDER SUCCESS] Code synthesized using Fallback Provider 2 (${modelName}).`;
+        console.log(logMsg);
+        if (options?.subtaskId) {
+          broadcastSSE("subtask_log", { subtaskId: options.subtaskId, log: logMsg });
+        }
+        return content;
+      }
+    } catch (thirdPartyErr: any) {
+      const isQuota = isQuotaOrRateLimitError(thirdPartyErr);
+      const logMsg = `[QUOTA FALLBACK] Fallback Provider 2 (${modelName}) failed (${isQuota ? "RATE_LIMITED" : thirdPartyErr.message}).`;
+      console.warn(logMsg);
+      if (options?.subtaskId) {
+        broadcastSSE("subtask_log", { subtaskId: options.subtaskId, log: logMsg });
+      }
+      errors.push(`Fallback Provider 2 (${modelName}): ${thirdPartyErr.message}`);
+    }
+  } else {
+    errors.push("Fallback Provider 2: No DEEPSEEK_API_KEY or OPENAI_API_KEY configured");
+  }
+
+  // --- All Fallback Providers Failed / Quota Exhausted ---
+  const fatalMsg = `EXECUTION_FAILED_QUOTA_EXHAUSTED: All AI Providers Rate-Limited — Retry in 60s (${errors.join("; ")})`;
+  console.error(`[FATAL EXHAUSTION] ${fatalMsg}`);
+  if (options?.subtaskId) {
+    broadcastSSE("subtask_log", { subtaskId: options.subtaskId, log: fatalMsg });
+  }
+
+  throw new Error(fatalMsg);
+}
+
+// Convenience: run a planning prompt with automatic fallback provider cycling.
 async function runPlanningPrompt(
   systemPrompt: string,
   userContent: string,
   env?: Partial<AppEnv>,
   maxTokens = 2048
 ): Promise<string> {
-  const resolved = resolveEnvWithOverrides(env);
-
-  if (resolved.AI) {
-    // Use Cloudflare Workers AI binding (no API key cost, edge-native)
-    const messages: AiChatMessage[] = [
-      { role: "system", content: systemPrompt },
-      { role: "user", content: userContent },
-    ];
-    return runCfAi(resolved.AI, messages, maxTokens);
-  }
-
-  // Fallback: Gemini Flash (used in local `pnpm dev` without a KV/D1/AI binding)
-  const ai = getGeminiClient(env);
-  if (!ai) {
-    throw new Error("No AI inference binding (Cloudflare AI or Gemini client) was initialized. Set GEMINI_API_KEY or bind Cloudflare AI.");
-  }
-  const response = await ai.models.generateContent({
-    model: "gemini-3.6-flash",
-    contents: userContent,
-    config: { systemInstruction: systemPrompt, responseMimeType: "application/json" }
-  });
-  return response.text ?? "";
+  return generateWithFallback(systemPrompt, userContent, env, { maxTokens });
 }
 
 export const sseClients = new Set<any>();
@@ -905,55 +1055,20 @@ ${conversationContext}
 ${visionContext}
 ${workspaceContext}`;
 
-  // If Cloudflare Workers AI binding is passed
-  if (ai && typeof (ai as any).run === "function") {
-    try {
-      const messages: AiChatMessage[] = [
-        { role: "system", content: systemInstruction },
-        { role: "user", content: userContent }
-      ];
-      const response = await (ai as AiBinding).run(model, { messages, max_tokens: 3000 });
-      let code = extractCfAiText(response);
-      if (code) {
-        if (code.startsWith("```")) {
-          const lines = code.split("\n");
-          if (lines[0].startsWith("```")) lines.shift();
-          if (lines[lines.length - 1].startsWith("```")) lines.pop();
-          code = lines.join("\n");
-        }
-        return code;
-      }
-    } catch (cfErr: any) {
-      console.warn(`[generateSubtaskCode] CF Workers AI failed: ${cfErr.message}. Trying local synthesis.`);
-    }
+  // Execute via generateWithFallback (Primary: Gemini -> Fallback 1: CF Workers AI -> Fallback 2: DeepSeek/OpenAI)
+  let code = await generateWithFallback(systemInstruction, userContent, undefined, {
+    model,
+    maxTokens: 3500
+  });
+
+  if (code.startsWith("```")) {
+    const lines = code.split("\n");
+    if (lines[0].startsWith("```")) lines.shift();
+    if (lines[lines.length - 1].startsWith("```")) lines.pop();
+    code = lines.join("\n");
   }
 
-  // Fallback to Gemini or Smart Local Synthesis
-  if (!ai || typeof (ai as any).run === "function") {
-    console.warn("[generateSubtaskCode] No Gemini AI inference engine available. Executing smart local synthesis...");
-    return synthesizeCodeLocally(prompt, subtaskName, targetPath, currentFiles);
-  }
-
-  try {
-    const response = await (ai as GoogleGenAI).models.generateContent({
-      model,
-      contents: userContent,
-      config: { systemInstruction }
-    });
-
-    let code = response.text || "";
-    if (code.startsWith("```")) {
-      const lines = code.split("\n");
-      if (lines[0].startsWith("```")) lines.shift();
-      if (lines[lines.length - 1].startsWith("```")) lines.pop();
-      code = lines.join("\n");
-    }
-    if (code) return code;
-  } catch (geminiErr: any) {
-    console.warn(`[generateSubtaskCode] Gemini failed: ${geminiErr.message}. Executing local synthesis.`);
-  }
-
-  return synthesizeCodeLocally(prompt, subtaskName, targetPath, currentFiles);
+  return code;
 }
 
 // ---------------------------------------------------------------------------
@@ -1316,10 +1431,19 @@ CRITICAL PATH RULES:
             }
           }
 
-          // Save to virtual DB (saveFile now writes to agent-workspace/ on disk)
+          // Save to virtual DB (saveFile writes to agent-workspace/ on disk)
           const fileNode: FileNode = { path: targetPath, content: code, language };
-          await saveFile(fileNode);   // isolation handled inside saveFile
-          sub.logs.push(`[SUCCESS] Wrote file to agent-workspace: ${targetPath}`);
+          await saveFile(fileNode);
+
+          // VERIFY EXECUTION FLOW: Verify that file artifact was actually written to storage and is valid
+          const verifiedFiles = await getFiles();
+          const savedArtifact = verifiedFiles.find(f => f.path === targetPath);
+          if (!targetPath.endsWith(".gitkeep") && (!savedArtifact || !savedArtifact.content || savedArtifact.content.trim().length === 0)) {
+            releaseFileLock(targetPath, sub.id);
+            throw new Error(`VERIFICATION_FAILED: No valid file artifact was written for ${targetPath}. Subtask cannot be marked completed.`);
+          }
+
+          sub.logs.push(`[SUCCESS] Wrote and verified file artifact: ${targetPath}`);
           appendLogDrop("info", "workspace", `Wrote agent-workspace/${targetPath}`);
 
           releaseFileLock(targetPath, sub.id);
@@ -1352,7 +1476,7 @@ CRITICAL PATH RULES:
 
                 if (fixedCode && fixedCode !== code) {
                   const fixedNode: FileNode = { path: targetPath, content: fixedCode, language };
-                  await saveFile(fixedNode); // isolation handled inside saveFile → agent-workspace/
+                  await saveFile(fixedNode);
                   sub.logs.push(`[RETRY] ✅ Auto-fixed and re-wrote: ${targetPath}`);
                   broadcastSSE("file-created", fixedNode);
                 }
@@ -1366,7 +1490,7 @@ CRITICAL PATH RULES:
           sub.code = code;
           sub.status = "completed";
           sub.completedAt = new Date().toISOString();
-          sub.logs.push(`[DONE] ✅ Compiled and wrote: ${targetPath}`);
+          sub.logs.push(`[DONE] ✅ Compiled, verified, and wrote: ${targetPath}`);
           broadcastSSE("subtask_log", { subtaskId: sub.id, log: sub.logs[sub.logs.length - 1] });
 
         } catch (subErr: any) {
@@ -1376,6 +1500,10 @@ CRITICAL PATH RULES:
           await saveTask(task);
           broadcastSSE("task-update", task);
           broadcastSSE("subtask_log", { subtaskId: sub.id, log: sub.logs[sub.logs.length - 1] });
+
+          if (subErr.message && subErr.message.includes("EXECUTION_FAILED_QUOTA_EXHAUSTED")) {
+            throw subErr;
+          }
         }
 
         task.progress = Math.round(((sIdx + 1) / task.subtasks.length) * 100);
@@ -1462,12 +1590,29 @@ To automatically push builds or sync this project with external repositories and
       if (t.status === "pending" || t.status === "running") {
         t.status = "failed";
         await saveTask(t);
+        broadcastSSE("task-update", t);
       }
     }
+
+    const isQuotaExhausted = err.message && err.message.includes("EXECUTION_FAILED_QUOTA_EXHAUSTED");
+
+    if (isQuotaExhausted) {
+      broadcastSSE("EXECUTION_FAILED_QUOTA_EXHAUSTED", {
+        taskId: tasks[0]?.id || "unknown",
+        error: "All AI Providers Rate-Limited — Retry in 60s"
+      });
+      broadcastSSE("agent_error", {
+        type: "EXECUTION_FAILED_QUOTA_EXHAUSTED",
+        message: "All AI Providers Rate-Limited — Retry in 60s"
+      });
+    }
+
     const finalMsg: Message = {
       id: `msg-${Date.now()}-failed`,
       role: "assistant",
-      content: `### ❌ Build Failed\n\nAn unexpected error occurred: ${err.message || err}`,
+      content: isQuotaExhausted
+        ? `### ⚠️ All AI Providers Rate-Limited — Retry in 60s\n\nAll AI provider endpoints (Gemini, Cloudflare Workers AI, DeepSeek/OpenAI) are currently rate-limited or quota exhausted. Please wait 60 seconds before retrying.`
+        : `### ❌ Build Failed\n\nAn unexpected error occurred: ${err.message || err}`,
       timestamp: new Date().toISOString(),
       durationSeconds: Math.round((Date.now() - startTime) / 1000)
     };

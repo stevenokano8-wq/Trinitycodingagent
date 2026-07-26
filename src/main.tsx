@@ -1,13 +1,10 @@
-import React from 'react';
-import ReactDOM from 'react-dom/client';
-import App from './App';
-import './index.css';
+import React from "react";
 
-const root = ReactDOM.createRoot(
-  document.getElementById('root') as HTMLElement
-);
-root.render(
-  <React.StrictMode>
-    <App />
-  </React.StrictMode>
-);
+export default function Main() {
+  return (
+    <div className="min-h-screen bg-black text-white p-8 flex flex-col items-center justify-center font-sans">
+      <h1 className="text-3xl font-bold mb-4">React + Vite Workspace</h1>
+      <p className="text-stone-400">Created for: Create a blue background </p>
+    </div>
+  );
+}

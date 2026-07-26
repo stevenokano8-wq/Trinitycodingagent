@@ -170,6 +170,8 @@ export interface AppEnv {
   GEMINI_API_KEY?: string;
   GITHUB_TOKEN?: string;
   GITHUB_REPO_URL?: string;
+  CLOUDFLARE_ACCOUNT_ID?: string;
+  CLOUDFLARE_API_TOKEN?: string;
 
   // ── Upstash Redis REST (fetch-based; works in Node + CF Workers) ───────────
   // Used as the cache tier between Cloudflare KV (production binding) and the
@@ -188,16 +190,18 @@ export interface QueueMessage {
 }
 
 // ── Runtime env overrides (for local dev / test injection) ────────────────────
-let _runtimeOverrides: Partial<AppEnv> = {};
-export function setRuntimeOverrides(overrides: Partial<AppEnv>) {
-  _runtimeOverrides = overrides;
+let _runtimeOverrides: Record<string, any> = {};
+export function setRuntimeOverrides(overrides: Record<string, any>) {
+  _runtimeOverrides = { ..._runtimeOverrides, ...overrides };
 }
 export function resolveEnvWithOverrides(env?: Partial<AppEnv>): Partial<AppEnv> {
-  const nodeEnv: Partial<AppEnv> = {};
+  const nodeEnv: Record<string, any> = {};
   if (typeof process !== "undefined" && process.env) {
     if (process.env.GEMINI_API_KEY) nodeEnv.GEMINI_API_KEY = process.env.GEMINI_API_KEY;
     if (process.env.GITHUB_TOKEN) nodeEnv.GITHUB_TOKEN = process.env.GITHUB_TOKEN;
     if (process.env.GITHUB_REPO_URL) nodeEnv.GITHUB_REPO_URL = process.env.GITHUB_REPO_URL;
+    if (process.env.CLOUDFLARE_ACCOUNT_ID) nodeEnv.CLOUDFLARE_ACCOUNT_ID = process.env.CLOUDFLARE_ACCOUNT_ID;
+    if (process.env.CLOUDFLARE_API_TOKEN) nodeEnv.CLOUDFLARE_API_TOKEN = process.env.CLOUDFLARE_API_TOKEN;
     if (process.env.UPSTASH_REDIS_REST_URL) nodeEnv.UPSTASH_REDIS_REST_URL = process.env.UPSTASH_REDIS_REST_URL;
     if (process.env.UPSTASH_REDIS_REST_TOKEN) nodeEnv.UPSTASH_REDIS_REST_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN;
   }

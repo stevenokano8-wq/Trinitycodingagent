@@ -1314,7 +1314,7 @@ export default function App() {
   }
 
   return (
-    <div className="h-screen max-h-screen h-[100dvh] max-h-[100dvh] bg-slate-50 flex flex-col font-sans select-none overflow-hidden antialiased">
+    <div className="h-screen max-h-screen h-[100dvh] max-h-[100dvh] bg-[#FFF5EC] flex flex-col font-sans select-none overflow-hidden antialiased">
       <input 
         type="file" 
         ref={fileInputRef} 
@@ -1323,7 +1323,7 @@ export default function App() {
         accept="image/*,.txt,.pdf,.doc,.docx,.json,.js,.ts,.tsx,.css,.html" 
       />
       {/* Top Banner Bar - Fixed non-scrolling for all screen sizes */}
-      <header className="bg-white/95 backdrop-blur-md border-b border-gray-100 px-2 sm:px-6 py-2 sm:py-3.5 flex items-center justify-between sticky top-0 z-50 shadow-xs gap-1 sm:gap-3 w-full select-none flex-none">
+      <header className="bg-[#FEFAF8]/95 backdrop-blur-md border-b border-amber-100/60 px-2 sm:px-6 py-2 sm:py-3.5 flex items-center justify-between sticky top-0 z-50 shadow-xs gap-1 sm:gap-3 w-full select-none flex-none">
         
         {/* Left Side: Brand badge & Menu Toggle */}
         <div className="flex items-center gap-1 sm:gap-3 shrink-0">
@@ -1350,13 +1350,13 @@ export default function App() {
         </div>
 
         {/* Center: Tabs Bar - Responsive, Chrome Compatible, Fixed Layout */}
-        <div className="flex items-center bg-gray-100/90 p-0.5 sm:p-1 rounded-full border border-gray-200/80 relative shrink-0 max-w-[calc(100vw-110px)] sm:max-w-none overflow-x-auto scrollbar-none">
+        <div className="flex items-center bg-[#EDE8E0]/70 p-0.5 sm:p-1 rounded-full border border-[#D6CFC7]/60 relative shrink-0 max-w-[calc(100vw-110px)] sm:max-w-none overflow-x-auto scrollbar-none">
           <button
             id="tab-btn-chat"
             onClick={() => setActiveTab("chat")}
             className={`flex items-center gap-1 sm:gap-2 px-2.5 sm:px-5 py-1 sm:py-1.5 rounded-full text-[10px] sm:text-xs font-semibold transition-all whitespace-nowrap shrink-0 ${
               activeTab === "chat" 
-                ? "bg-white text-gray-900 shadow-xs" 
+                ? "bg-[#FEFAF7] text-gray-900 shadow-xs" 
                 : "text-gray-500 hover:text-gray-900"
             }`}
           >
@@ -1369,7 +1369,7 @@ export default function App() {
             onClick={() => setActiveTab("preview")}
             className={`flex items-center gap-1 sm:gap-2 px-2.5 sm:px-5 py-1 sm:py-1.5 rounded-full text-[10px] sm:text-xs font-semibold transition-all whitespace-nowrap shrink-0 ${
               activeTab === "preview" 
-                ? "bg-white text-gray-900 shadow-xs" 
+                ? "bg-[#FEFAF7] text-gray-900 shadow-xs" 
                 : "text-gray-500 hover:text-gray-900"
             }`}
           >
@@ -1382,7 +1382,7 @@ export default function App() {
             onClick={() => setActiveTab("code")}
             className={`flex items-center gap-1 sm:gap-2 px-2.5 sm:px-5 py-1 sm:py-1.5 rounded-full text-[10px] sm:text-xs font-semibold transition-all whitespace-nowrap shrink-0 ${
               activeTab === "code" 
-                ? "bg-white text-gray-900 shadow-xs" 
+                ? "bg-[#FEFAF7] text-gray-900 shadow-xs" 
                 : "text-gray-500 hover:text-gray-900"
             }`}
           >
@@ -1396,7 +1396,7 @@ export default function App() {
               id="tab-btn-more"
               onClick={() => setIsMoreMenuOpen(!isMoreMenuOpen)}
               className={`flex items-center gap-1 sm:gap-2 px-2 sm:px-4 py-1 sm:py-1.5 rounded-full text-[10px] sm:text-xs font-semibold transition-all whitespace-nowrap shrink-0 ${
-                !["chat", "preview", "faceswap", "code"].includes(activeTab) ? "bg-white text-gray-900 shadow-xs" : "text-gray-500 hover:text-gray-900"
+                !["chat", "preview", "faceswap", "code"].includes(activeTab) ? "bg-[#FEFAF7] text-gray-900 shadow-xs" : "text-gray-500 hover:text-gray-900"
               }`}
             >
               <span>More</span>
@@ -1412,7 +1412,7 @@ export default function App() {
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
                     exit={{ opacity: 0, y: 10 }}
-                    className="absolute right-0 mt-2 w-56 bg-white border border-gray-100 rounded-2xl shadow-xl p-2 z-50 overflow-hidden font-sans text-xs"
+                    className="absolute right-0 mt-2 w-56 bg-[#FEFAF7] border border-amber-100/60 rounded-2xl shadow-xl p-2 z-50 overflow-hidden font-sans text-xs"
                   >
                     {[
                       { id: "simulation", name: "Sub-Tasks Simulator", icon: Cpu, color: "text-pink-500 animate-pulse" },
@@ -1542,10 +1542,10 @@ export default function App() {
                   <div className="w-full shrink-0 z-30">
                     <form 
                       onSubmit={handleSendPrompt}
-                      className="w-full max-w-3xl mx-auto bg-white rounded-3xl px-5 py-3 shadow-md hover:shadow-lg transition-all border border-gray-150 flex flex-col gap-2"
+                      className="w-full max-w-3xl mx-auto bg-[#FEFAF7] rounded-3xl px-5 py-3 shadow-sm hover:shadow-md transition-all border border-amber-100/60 flex flex-col gap-2"
                     >
                       {attachment && (
-                        <div className="w-full flex items-center gap-2 mb-1 bg-slate-50 border border-slate-100 p-2 rounded-2xl text-left">
+                        <div className="w-full flex items-center gap-2 mb-1 bg-[#FFF9F5] border border-amber-100/40 p-2 rounded-2xl text-left">
                           {attachment.type.startsWith("image/") ? (
                             <img
                               src={`data:${attachment.type};base64,${attachment.data}`}
@@ -1636,7 +1636,7 @@ export default function App() {
                           key={i}
                           type="button"
                           onClick={() => setInputText(sug)}
-                          className="text-[11px] bg-white border border-gray-200 text-gray-500 hover:text-gray-800 px-3 py-1.5 rounded-full transition-colors font-mono cursor-pointer"
+                          className="text-[11px] bg-[#FEFAF7] border border-amber-100/60 text-gray-500 hover:text-gray-800 px-3 py-1.5 rounded-full transition-colors font-mono cursor-pointer"
                         >
                           {sug}
                         </button>
@@ -1860,13 +1860,13 @@ export default function App() {
                   </div>
 
                   {/* Fixed bottom Input Bar */}
-                  <div className="w-full bg-slate-50/90 pt-3 pb-1 border-t border-gray-150/50 z-30 shrink-0">
+                  <div className="w-full bg-[#FFF5EC]/95 pt-3 pb-1 border-t border-amber-100/30 z-30 shrink-0">
                     <form 
                       onSubmit={handleSendPrompt}
-                      className="w-full max-w-3xl mx-auto bg-white rounded-3xl px-5 py-3 shadow-md hover:shadow-lg transition-all border border-gray-150 flex flex-col gap-2"
+                      className="w-full max-w-3xl mx-auto bg-[#FEFAF7] rounded-3xl px-5 py-3 shadow-sm hover:shadow-md transition-all border border-amber-100/60 flex flex-col gap-2"
                     >
                       {attachment && (
-                        <div className="w-full flex items-center gap-2 mb-1 bg-slate-50 border border-slate-100 p-2 rounded-2xl text-left">
+                        <div className="w-full flex items-center gap-2 mb-1 bg-[#FFF9F5] border border-amber-100/40 p-2 rounded-2xl text-left">
                           {attachment.type.startsWith("image/") ? (
                             <img
                               src={`data:${attachment.type};base64,${attachment.data}`}
@@ -2131,7 +2131,7 @@ export default function App() {
               initial={{ x: "-100%" }}
               animate={{ x: 0 }}
               exit={{ x: "-100%" }}
-              className="fixed left-0 top-0 bottom-0 w-80 bg-white border-r border-gray-100 shadow-2xl z-50 p-6 flex flex-col"
+              className="fixed left-0 top-0 bottom-0 w-80 bg-[#FFF9F5] border-r border-amber-100/60 shadow-2xl z-50 p-6 flex flex-col"
             >
               <div className="flex items-center justify-between pb-6 border-b border-gray-50">
                 <span className="font-bold text-gray-900 font-display">System Clusters</span>

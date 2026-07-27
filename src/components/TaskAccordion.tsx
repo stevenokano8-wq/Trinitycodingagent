@@ -557,7 +557,12 @@ export default function TaskAccordion({
             <div className="p-4 flex flex-col gap-3.5 bg-slate-50/40">
               {task.subtasks.map((sub, sIdx) => {
                 const hasStartedOrLogged = sub.status === "running" || sub.status === "completed" || sub.status === "failed" || (sub.logs && sub.logs.length > 1);
-                const isSubtaskLocked = isLocked || (!hasStartedOrLogged && (sIdx > task.activeSubtaskIndex || (task.status === "pending" && sIdx > 0)));
+                // Only lock subtasks that haven't started AND are strictly ahead of the
+                // currently active index. Removing the old "pending && sIdx > 0" rule
+                // that incorrectly locked every subtask beyond the first before the task
+                // even started running — that was the cause of all "LOCKED" accordions
+                // that never opened or executed.
+                const isSubtaskLocked = isLocked || (!hasStartedOrLogged && sIdx > task.activeSubtaskIndex);
                 return (
                   <SubtaskAccordionItem
                     key={sub.id}

@@ -75,7 +75,7 @@ class_name = "WebSocketManager"
 
 [[durable_objects.bindings]]
 name = "WORKFLOW_ENGINE"
-class_name = "WorkflowEngine"
+class_name = "WorkflowEngineSql"
 
 [[durable_objects.bindings]]
 name = "THINK_AGENT"
@@ -83,7 +83,7 @@ class_name = "ThinkAgent"
 
 [[durable_objects.bindings]]
 name = "SUB_AGENT_ORCHESTRATOR"
-class_name = "SubAgentOrchestrator"
+class_name = "SubAgentOrchestratorSql"
 
 [[durable_objects.bindings]]
 name = "USER_PROFILE"
@@ -131,3 +131,18 @@ new_classes = [
 tag = "v5_remove_sandbox_stub"
 new_classes     = []
 deleted_classes = []
+
+[[migrations]]
+tag = "v6_add_sandbox_container"
+new_classes     = ["Sandbox"]
+deleted_classes = []
+
+[[migrations]]
+tag = "v7_sqlite_state_tracking"
+new_sqlite_classes = ["WorkflowEngineSql", "SubAgentOrchestratorSql"]
+deleted_classes    = []
+
+[[migrations]]
+tag = "v8_cleanup_sandbox"
+new_classes     = []
+deleted_classes = ["Sandbox"]

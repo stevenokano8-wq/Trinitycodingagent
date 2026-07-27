@@ -7,6 +7,11 @@
     "serve": "vite serve"
   },
   "dependencies": {
+    "@cloudflare/agents": "^0.0.16",
+    "@cloudflare/sandbox": "^0.12.4",
+    "@cloudflare/think": "^0.15.0",
+    "@google/genai": "^2.13.0",
+    "hono": "^4.12.32",
     "react": "^18.2.0",
     "react-dom": "^18.2.0"
   },

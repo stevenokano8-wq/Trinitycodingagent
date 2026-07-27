@@ -25,7 +25,7 @@ jobs:
           node-version: 22
 
       - name: Install Dependencies
-        run: npm install
+        run: npm install --legacy-peer-deps
 
       # Frontend type-check only (vite.config.ts + src/**).
       # Server files are excluded from tsconfig.json; Wrangler compiles the

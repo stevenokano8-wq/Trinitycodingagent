@@ -26,32 +26,43 @@ import * as childProcess from "child_process";
 import * as fs from "fs";
 import * as path from "path";
 
-// ── Durable Object exports ────────────────────────────────────────────────────
-export { SessionWorkspace }     from "./durable-objects/SessionWorkspace.js";
-export { FileExplorer }         from "./durable-objects/FileExplorer.js";
-export { WebSocketManager }     from "./durable-objects/WebSocketManager.js";
-export { WorkflowEngineSql }       from "./durable-objects/WorkflowEngine.js";
-export { ThinkAgent }           from "./durable-objects/ThinkAgent.js";
-export { SubAgentOrchestratorSql } from "./durable-objects/SubAgentOrchestrator.js";
+// ═══════════════════════════════════════════════════════════════════════════════
+//  DURABLE OBJECT EXPORTS
+//
+//  RULE: Every class ever registered via a [[migrations]] entry in
+//  wrangler.api.toml MUST be exported from this file — even if the binding
+//  has been renamed or the class is no longer actively used.  Removing an
+//  export without a corresponding deleted_classes migration causes
+//  Cloudflare error 10064 and blocks all deploys.
+//
+//  DO NOT remove, rename, or move any export below without first adding the
+//  appropriate migration (renamed_classes or deleted_classes) to
+//  wrangler.api.toml.
+// ═══════════════════════════════════════════════════════════════════════════════
 
-// ── Legacy class-name aliases (CF error 10064 guard) ─────────────────────────
-// WorkflowEngine and SubAgentOrchestrator were registered in migration v4.
-// v7 introduced the *Sql SQLite variants under new names but did NOT delete the
-// old registrations, so Cloudflare still requires these names to be exported.
-// Aliasing them to the *Sql implementations satisfies the check without
-// destroying any existing DO instances.
+// ── v4 — original Durable Object classes ─────────────────────────────────────
+export { SessionWorkspace }  from "./durable-objects/SessionWorkspace.js";
+export { FileExplorer }      from "./durable-objects/FileExplorer.js";
+export { WebSocketManager }  from "./durable-objects/WebSocketManager.js";
+export { ThinkAgent }        from "./durable-objects/ThinkAgent.js";
+export { UserProfile }       from "./durable-objects/UserProfile.js";
+export { WorkspaceRegistry } from "./durable-objects/WorkspaceRegistry.js";
+export { AiGateway }         from "./durable-objects/AiGateway.js";
+export { LivePreview }       from "./durable-objects/LivePreview.js";
+export { BrowserRun }        from "./durable-objects/BrowserRun.js";
+
+// v4 names for WorkflowEngine + SubAgentOrchestrator — kept as aliases to the
+// v7 *Sql classes.  Cloudflare retains the v4 registrations in its DO registry
+// and requires these export names to remain present (CF error 10064).
 export { WorkflowEngineSql       as WorkflowEngine }       from "./durable-objects/WorkflowEngine.js";
 export { SubAgentOrchestratorSql as SubAgentOrchestrator } from "./durable-objects/SubAgentOrchestrator.js";
-export { UserProfile }          from "./durable-objects/UserProfile.js";
-export { WorkspaceRegistry }    from "./durable-objects/WorkspaceRegistry.js";
-export { AiGateway }            from "./durable-objects/AiGateway.js";
-export { LivePreview }          from "./durable-objects/LivePreview.js";
-export { BrowserRun }           from "./durable-objects/BrowserRun.js";
 
-// ── Cloudflare Sandbox — provides real Linux container runtime for CLI commands ──
-// The Sandbox class must be exported from the worker entry point so Wrangler
-// can register it as a Durable Object and bind it via wrangler.api.toml.
-export { Sandbox }              from "@cloudflare/sandbox";
+// ── v6 — Cloudflare Sandbox (Linux container runtime for shell / npm commands) ─
+export { Sandbox } from "@cloudflare/sandbox";
+
+// ── v7 — SQLite-backed DO variants (active bindings in wrangler.api.toml) ────
+export { WorkflowEngineSql }       from "./durable-objects/WorkflowEngine.js";
+export { SubAgentOrchestratorSql } from "./durable-objects/SubAgentOrchestrator.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 

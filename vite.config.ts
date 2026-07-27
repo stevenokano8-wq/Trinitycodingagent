@@ -1,6 +1,8 @@
 ```typescript
 import { defineConfig } from 'vite';
-import react from '@vitejs/plugin-react';
+import reactPlugin from '@vitejs/plugin-react';
+
+const react = typeof reactPlugin === 'function' ? reactPlugin : (reactPlugin as any)?.default || reactPlugin;
 
 export default defineConfig({
   plugins: [react()],

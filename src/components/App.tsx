@@ -1,16 +1,11 @@
-```typescript
 import React from 'react';
-import './index.css';
 
-function App() {
+export function App() {
   return (
-    <div className="ui-render">
-      <div>
-        <h1 className="ui-text text-large">The UI is now visible</h1>
-      </div>
+    <div className="h-screen w-screen flex justify-center items-center text-3xl text-white bg-slate-900">
+      The UI is now visible
     </div>
   );
 }
 
 export default App;
-```

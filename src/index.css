@@ -1,55 +1,15 @@
-```css
 @import "tailwindcss/base";
 @import "tailwindcss/components";
 @import "tailwindcss/utilities";
 
 body {
-  @apply bg-blue-500 h-screen;
+  margin: 0;
+  padding: 0;
+  background-color: #0f172a;
+  color: #ffffff;
 }
 
 #root {
-  @apply h-full w-full;
+  height: 100vh;
+  width: 100vw;
 }
-
-h1, h2, h3, h4, h5, h6 {
-  @apply text-white;
-}
-
-.text-large {
-  @apply text-3xl;
-}
-
-.flex-center {
-  @apply flex justify-center items-center;
-}
-
-.full-height {
-  @apply h-screen;
-}
-
-.full-width {
-  @apply w-screen;
-}
-
-/* Add styles to ensure UI visibility */
-.ui-container {
-  @apply flex justify-center items-center h-screen w-screen;
-}
-
-.ui-text {
-  @apply text-3xl text-white;
-}
-
-/* Additional styles for better UI rendering */
-.ui-render {
-  @apply flex flex-col justify-center items-center h-screen w-screen;
-}
-
-.ui-render > div {
-  @apply bg-blue-500 h-full w-full flex justify-center items-center;
-}
-
-.ui-render > div > h1 {
-  @apply text-5xl text-white;
-}
-```

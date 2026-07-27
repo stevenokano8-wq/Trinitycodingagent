@@ -39,6 +39,11 @@ export { AiGateway }            from "./durable-objects/AiGateway.js";
 export { LivePreview }          from "./durable-objects/LivePreview.js";
 export { BrowserRun }           from "./durable-objects/BrowserRun.js";
 
+// ── Cloudflare Sandbox — provides real Linux container runtime for CLI commands ──
+// The Sandbox class must be exported from the worker entry point so Wrangler
+// can register it as a Durable Object and bind it via wrangler.api.toml.
+export { Sandbox }              from "@cloudflare/sandbox";
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 type Bindings = AppEnv;
@@ -74,7 +79,7 @@ app.get("/api/health", async (c) => {
   await ensureInit(c.env);
   return c.json({
     status: "ok", timestamp: new Date().toISOString(),
-    bindings: { d1: !!c.env.DB, kv: !!c.env.CACHE_KV, r2: !!c.env.FILES_R2, ai: !!c.env.AI, vectorize: !!c.env.VECTORIZE, queue: !!c.env.TASK_QUEUE, browser: !!c.env.BROWSER, sandbox: !!c.env.SANDBOX },
+    bindings: { d1: !!c.env.DB, kv: !!c.env.CACHE_KV, r2: !!c.env.FILES_R2, ai: !!c.env.AI, vectorize: !!c.env.VECTORIZE, queue: !!c.env.TASK_QUEUE, browser: !!c.env.BROWSER, sandbox: !!(c.env.Sandbox ?? c.env.SANDBOX) },
     dbStatus,
   });
 });

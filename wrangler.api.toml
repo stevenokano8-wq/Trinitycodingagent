@@ -53,11 +53,11 @@ dead_letter_queue         = "sovereign-lobe-queue"
 binding = "BROWSER"
 
 # ── Cloudflare Sandbox (code execution via @cloudflare/sandbox) ───────────────
-# Uncomment when Containers exits beta on your account
-# [[containers]]
-# binding    = "SANDBOX"
-# image      = "ghcr.io/cloudflare/sandbox:latest"
-# max_instances = 5
+# Provides a real Linux container runtime for npm/npx/shell commands inside CF Workers.
+# The Sandbox class is exported from server/worker.ts via @cloudflare/sandbox.
+[[durable_objects.bindings]]
+name = "Sandbox"
+class_name = "Sandbox"
 
 # ── Durable Objects ───────────────────────────────────────────────────────────
 
@@ -131,3 +131,8 @@ new_classes = [
 tag = "v5_remove_sandbox_stub"
 new_classes     = []
 deleted_classes = ["Sandbox"]
+
+[[migrations]]
+tag = "v6_add_sandbox_container"
+new_classes     = ["Sandbox"]
+deleted_classes = []

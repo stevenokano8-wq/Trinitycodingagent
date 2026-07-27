@@ -148,7 +148,10 @@ export interface AppEnv {
   TASK_QUEUE?: Queue<QueueMessage>;
 
   // ── Code execution (Cloudflare Sandbox / Containers) ───────────────────────
+  // SANDBOX (all-caps) kept for backwards compat with old container binding style
   SANDBOX?: ContainerStub;
+  // Sandbox (Pascal-case) is the DO namespace used by @cloudflare/sandbox getSandbox()
+  Sandbox?: DurableObjectNamespace;
 
   // ── Browser rendering (Cloudflare Browser Rendering) ──────────────────────
   BROWSER?: BrowserBinding;

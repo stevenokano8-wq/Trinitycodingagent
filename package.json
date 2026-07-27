@@ -7,6 +7,7 @@
     "serve": "vite serve"
   },
   "dependencies": {
+    "@cloudflare/agents": "^0.0.16",
     "@cloudflare/sandbox": "^0.12.0",
     "@google/genai": "^0.2.0",
     "hono": "^4.0.0",

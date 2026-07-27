@@ -1,5 +1,5 @@
 /**
- * SUB_AGENT_ORCHESTRATOR — Durable Object
+ * SUB_AGENT_ORCHESTRATOR — Durable Object (SQLite backend)
  *
  * Decomposes a high-level goal into parallel subtasks, spawns a dedicated
  * THINK_AGENT DO for each, collects their outputs, and synthesises a final
@@ -9,6 +9,9 @@
  *   1. decompose(goal)    → N subtasks via DeepSeek R1 reasoning
  *   2. fan-out            → N parallel THINK_AGENT DO calls
  *   3. synthesise(results)→ DeepSeek R1 merges all outputs
+ *
+ * Storage: ctx.storage.sql (SQLite Durable Object backend — migration v7)
+ *   TABLE runs (run_id, data TEXT/JSON, session_id, status, created_at)
  *
  * Routes:
  *   POST /orchestrate           — { goal, sessionId, maxSubtasks? }
@@ -49,11 +52,26 @@ export class SubAgentOrchestrator {
 
   constructor(state: DurableObjectState, env: AppEnv) {
     this.state = state;
-    this.env = env;
+    this.env   = env;
+
+    // Initialize SQLite schema; guaranteed to complete before any fetch() runs.
+    this.state.blockConcurrencyWhile(async () => {
+      this.state.storage.sql.exec(`
+        CREATE TABLE IF NOT EXISTS runs (
+          run_id     TEXT PRIMARY KEY,
+          data       TEXT NOT NULL,
+          session_id TEXT NOT NULL,
+          status     TEXT NOT NULL,
+          created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_runs_session ON runs(session_id);
+        CREATE INDEX IF NOT EXISTS idx_runs_status  ON runs(status);
+      `);
+    });
   }
 
   async fetch(request: Request): Promise<Response> {
-    const url = new URL(request.url);
+    const url   = new URL(request.url);
     const parts = url.pathname.split("/").filter(Boolean);
 
     if (request.method === "POST" && parts[0] === "orchestrate") {
@@ -73,119 +91,112 @@ export class SubAgentOrchestrator {
     const { goal, sessionId = "global", maxSubtasks = DEFAULT_MAX_SUBTASKS } =
       await request.json() as { goal: string; sessionId?: string; maxSubtasks?: number };
 
-    const runId = crypto.randomUUID();
+    const runId: string = crypto.randomUUID();
     const run: OrchestratorRun = {
       runId, sessionId, goal,
       status: "decomposing", subtasks: [],
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
-    await this.saveRun(run);
+    this.sqlSaveRun(run);
 
-    // Run asynchronously so we can return the runId immediately
-    this.execute(run, Math.min(maxSubtasks, 8)).catch(err => {
+    // Run async decompose+execute+synthesise pipeline without blocking response
+    this.runPipeline(run, maxSubtasks).catch(err => {
       run.status = "failed";
       run.error  = String(err);
-      this.saveRun(run);
+      this.sqlSaveRun(run);
     });
 
     return Response.json({ ok: true, runId });
   }
 
-  // ── Core orchestration pipeline ───────────────────────────────────────────
-  private async execute(run: OrchestratorRun, maxSubtasks: number): Promise<void> {
-    // 1. Decompose
+  private async runPipeline(run: OrchestratorRun, maxSubtasks: number): Promise<void> {
+    // Phase 1: decompose
     const subtasks = await this.decompose(run.goal, maxSubtasks, run.sessionId);
     run.subtasks = subtasks;
     run.status   = "running";
-    await this.saveRun(run);
+    this.sqlSaveRun(run);
 
-    // 2. Fan-out — spawn all THINK_AGENT DOs in parallel
-    await Promise.all(subtasks.map(async (st) => {
-      st.status  = "running";
-      await this.saveRun(run);
-      try {
-        st.result  = await this.runSubAgent(st, run.sessionId);
-        st.status  = "done";
-      } catch (err) {
-        st.status  = "failed";
-        st.error   = String(err);
-      }
-      await this.saveRun(run);
-    }));
+    // Phase 2: fan-out — run subtasks in parallel
+    await Promise.all(subtasks.map(st => this.runSubtask(st, run)));
 
-    // 3. Synthesise
+    // Phase 3: synthesise
     run.status = "synthesising";
-    await this.saveRun(run);
-    try {
-      run.synthesis = await this.synthesise(run.goal, run.subtasks, run.sessionId);
-      run.status    = "done";
-    } catch (err) {
-      run.status = "failed";
-      run.error  = `Synthesis failed: ${err}`;
-    }
-    await this.saveRun(run);
+    this.sqlSaveRun(run);
+    run.synthesis = await this.synthesise(run.goal, run.subtasks, run.sessionId);
+    run.status    = "done";
+    this.sqlSaveRun(run);
   }
 
-  // ── Step 1: Decompose goal into subtasks via DeepSeek R1 ──────────────────
+  // ── Decompose goal into subtasks ───────────────────────────────────────────
   private async decompose(
-    goal: string, max: number, sessionId: string,
+    goal: string,
+    maxSubtasks: number,
+    sessionId: string,
   ): Promise<Subtask[]> {
-    const prompt = `Decompose this high-level goal into ${max} or fewer concrete, independent subtasks.
-Each subtask must be completable by an autonomous coding agent.
-Respond with ONLY a JSON array (no markdown):
-[{"title":"...","goal":"detailed task description for an agent"}]
+    const prompt = `You are a software architecture planner. Break the following goal into ${maxSubtasks} or fewer independent subtasks that can be executed in parallel.
 
-Goal: ${goal}`;
+Goal: ${goal}
+
+Respond ONLY with a JSON array (no markdown fences):
+[{"title":"...", "goal":"..."}]`;
 
     const raw = await this.callAI(
       [{ role: "user", content: prompt }],
-      "reasoning", sessionId
+      "reasoning",
+      sessionId,
     );
 
     let parsed: Array<{ title: string; goal: string }>;
     try {
-      const match = raw.match(/\[[\s\S]*\]/);
-      parsed = JSON.parse(match?.[0] ?? "[]");
+      const jsonMatch = raw.match(/\[[\s\S]*\]/);
+      parsed = JSON.parse(jsonMatch?.[0] ?? "[]");
     } catch {
-      // Fallback: single subtask = the original goal
-      parsed = [{ title: goal.slice(0, 60), goal }];
+      parsed = [{ title: "Execute goal", goal }];
     }
 
-    return parsed.slice(0, max).map((s, i) => ({
-      id:     `${i}`,
-      title:  s.title,
-      goal:   s.goal,
+    return parsed.slice(0, maxSubtasks).map((p, i) => ({
+      id: `${crypto.randomUUID().slice(0, 8)}-${i}`,
+      title: p.title,
+      goal:  p.goal,
       status: "pending" as const,
     }));
   }
 
-  // ── Step 2: Run one subtask via THINK_AGENT DO ────────────────────────────
-  private async runSubAgent(st: Subtask, sessionId: string): Promise<string> {
-    if (!this.env.THINK_AGENT) {
-      // Graceful fallback: answer the subtask directly with AI
-      return this.callAI(
-        [{ role: "user", content: `Complete this task: ${st.goal}` }],
-        "code_gen", sessionId
-      );
+  // ── Run a single subtask via THINK_AGENT DO ────────────────────────────────
+  private async runSubtask(subtask: Subtask, run: OrchestratorRun): Promise<void> {
+    subtask.status = "running";
+    this.sqlSaveRun(run);
+
+    try {
+      if (this.env.THINK_AGENT) {
+        const agentId  = this.env.THINK_AGENT.idFromName(`${run.sessionId}:${subtask.id}`);
+        const stub     = this.env.THINK_AGENT.get(agentId);
+        subtask.agentId = agentId.toString();
+        const resp = await stub.fetch(new Request("https://agent/run", {
+          method: "POST",
+          body:   JSON.stringify({ goal: subtask.goal, sessionId: run.sessionId }),
+          headers: { "Content-Type": "application/json" },
+        }));
+        const data = await resp.json() as { answer?: string };
+        subtask.result = data.answer ?? "(no answer)";
+      } else {
+        subtask.result = await this.callAI(
+          [{ role: "user", content: subtask.goal }],
+          "code_gen",
+          run.sessionId,
+        );
+      }
+      subtask.status = "done";
+    } catch (err) {
+      subtask.status = "failed";
+      subtask.error  = String(err);
     }
 
-    const agentId = this.env.THINK_AGENT.idFromName(`orch:${st.id}:${sessionId}`);
-    const stub    = this.env.THINK_AGENT.get(agentId);
-    st.agentId    = agentId.toString();
-
-    const resp = await stub.fetch(new Request("https://agent/run", {
-      method: "POST",
-      body: JSON.stringify({ goal: st.goal, sessionId }),
-      headers: { "Content-Type": "application/json" },
-    }));
-
-    if (!resp.ok) throw new Error(`Agent HTTP ${resp.status}`);
-    const data = await resp.json() as { answer?: string };
-    return data.answer ?? "(no answer)";
+    this.sqlSaveRun(run);
   }
 
-  // ── Step 3: Synthesise all results into a coherent final answer ───────────
+  // ── Synthesise all subtask outputs ────────────────────────────────────────
   private async synthesise(
     originalGoal: string,
     subtasks: Subtask[],
@@ -241,30 +252,38 @@ Be concrete and technical.`;
     return result.choices?.[0]?.message?.content ?? result.response ?? "";
   }
 
-  // ── Storage helpers ────────────────────────────────────────────────────────
-  private async saveRun(run: OrchestratorRun): Promise<void> {
+  // ── SQL helpers ────────────────────────────────────────────────────────────
+  private sqlSaveRun(run: OrchestratorRun): void {
     run.updatedAt = new Date().toISOString();
-    await this.state.storage.put(`run:${run.runId}`, run);
-    const index = await this.state.storage.get<string[]>("index") ?? [];
-    if (!index.includes(run.runId)) {
-      index.push(run.runId);
-      await this.state.storage.put("index", index);
-    }
+    this.state.storage.sql.exec(
+      `INSERT OR REPLACE INTO runs (run_id, data, session_id, status, created_at)
+       VALUES (?, ?, ?, ?, ?)`,
+      run.runId,
+      JSON.stringify(run),
+      run.sessionId,
+      run.status,
+      run.createdAt,
+    );
   }
 
-  private async getRun(runId: string): Promise<Response> {
-    const run = await this.state.storage.get<OrchestratorRun>(`run:${runId}`);
-    if (!run) return new Response("Not found", { status: 404 });
-    return Response.json(run);
+  private getRun(runId: string): Response {
+    const cursor = this.state.storage.sql.exec<{ data: string }>(
+      `SELECT data FROM runs WHERE run_id = ?`, runId
+    );
+    const row = [...cursor][0];
+    if (!row) return new Response("Not found", { status: 404 });
+    return Response.json(JSON.parse(row.data));
   }
 
-  private async listRuns(sessionId: string): Promise<Response> {
-    const index = await this.state.storage.get<string[]>("index") ?? [];
-    const runs: OrchestratorRun[] = [];
-    for (const id of index) {
-      const r = await this.state.storage.get<OrchestratorRun>(`run:${id}`);
-      if (r && (!sessionId || r.sessionId === sessionId)) runs.push(r);
-    }
-    return Response.json(runs.sort((a, b) => b.createdAt.localeCompare(a.createdAt)));
+  private listRuns(sessionId: string): Response {
+    const cursor = sessionId
+      ? this.state.storage.sql.exec<{ data: string }>(
+          `SELECT data FROM runs WHERE session_id = ? ORDER BY created_at DESC`, sessionId
+        )
+      : this.state.storage.sql.exec<{ data: string }>(
+          `SELECT data FROM runs ORDER BY created_at DESC`
+        );
+    const runs = [...cursor].map(r => JSON.parse(r.data) as OrchestratorRun);
+    return Response.json(runs);
   }
 }

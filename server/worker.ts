@@ -254,6 +254,50 @@ app.delete("/api/files", async (c) => {
 // ══════════════════════════════════════════════════════════════════════════════
 
 app.get("/api/logs",        async (c) => { const logs = getLogDrops(); return c.json({ count: logs.length, logs }); });
+
+// ── DB Status — live data for DbVisualizer component ─────────────────────────
+// Returns KV cache keys (sampled) + recent structured logs + binding health.
+app.get("/api/db/status", async (c) => {
+  await ensureInit(c.env);
+
+  // KV sample: list known prefixes and surface key/value/ttl metadata
+  const kvEntries: Array<{ key: string; val: string; ttl: string; type: string }> = [];
+  if (c.env.CACHE_KV) {
+    try {
+      const listed = await c.env.CACHE_KV.list({ prefix: "", limit: 20 } as Parameters<typeof c.env.CACHE_KV.list>[0]);
+      for (const k of (listed.keys ?? [])) {
+        const val = await c.env.CACHE_KV.get(k.name);
+        kvEntries.push({
+          key:  k.name,
+          val:  val ? (val.length > 60 ? val.slice(0, 60) + "…" : val) : "(null)",
+          ttl:  (k as { expiration?: number }).expiration
+                  ? `${Math.round(((k as { expiration?: number }).expiration! * 1000 - Date.now()) / 1000)}s`
+                  : "PERSISTENT",
+          type: val?.startsWith("{") ? "JSON" : "STRING",
+        });
+      }
+    } catch {
+      kvEntries.push({ key: "kv:error", val: "listing failed", ttl: "—", type: "ERROR" });
+    }
+  } else {
+    kvEntries.push({ key: "session_state:active_id", val: "local_fallback", ttl: "—", type: "STRING" });
+  }
+
+  // Log lines from in-process logger
+  const rawLogs = getLogDrops();
+  const logs = rawLogs.slice(-50).map(l => ({
+    ts:    l.timestamp ?? new Date().toISOString().slice(11, 19),
+    level: l.level ?? "info",
+    msg:   l.message ?? String(l),
+  }));
+
+  return c.json({
+    d1Status: dbStatus.d1,
+    kvStatus: dbStatus.kv,
+    kv:   kvEntries,
+    logs,
+  });
+});
 app.post("/api/logs/clear", async (c) => { clearLogDrops(); return c.json({ status: "cleared" }); });
 app.post("/api/cache/clear", async (c) => { await cacheFlush(); return c.json({ status: "cleared" }); });
 

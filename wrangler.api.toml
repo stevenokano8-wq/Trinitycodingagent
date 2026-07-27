@@ -3,8 +3,20 @@ main = "server/worker.ts"
 compatibility_date = "2026-07-11"
 compatibility_flags = ["nodejs_compat"]
 
+# Serve the Vite production build as static assets; the Worker handles /api/**
+# requests first, and all other paths fall through to SPA index.html.
+[assets]
+directory = "./dist"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+run_worker_first = false
+
 [[routes]]
 pattern = "agent-api.trinityuniverse.org"
+custom_domain = true
+
+[[routes]]
+pattern = "agent.trinityuniverse.org"
 custom_domain = true
 
 # ── Persistence ───────────────────────────────────────────────────────────────
@@ -136,3 +148,10 @@ deleted_classes = ["Sandbox"]
 tag = "v6_add_sandbox_container"
 new_classes     = ["Sandbox"]
 deleted_classes = []
+
+# Upgrade state-tracking DOs to SQLite backend for structured SQL queries.
+# New instances created after this tag use ctx.storage.sql instead of KV.
+[[migrations]]
+tag = "v7_sqlite_state_tracking"
+new_sqlite_classes = ["WorkflowEngine", "SubAgentOrchestrator"]
+deleted_classes    = []

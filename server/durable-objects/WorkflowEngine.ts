@@ -1,14 +1,17 @@
 /**
- * WORKFLOW_ENGINE — Durable Object
+ * WORKFLOW_ENGINE — Durable Object (SQLite backend)
  *
  * Durable multi-step task execution for jobs that may exceed 30s.
  *
  * Guarantees:
- *   • Checkpointing: every step's state is written to DO storage before execution
+ *   • Checkpointing: every step's state is written to DO SQLite before execution
  *   • Auto-retry:    exponential back-off on transient failures (up to 3 retries)
  *   • Approval gates:pauses workflow until POST /approve is called
  *   • Alarm watchdog: DO alarm fires every 10 min to catch stalled workflows
  *   • KV status:      current step/status written to CACHE_KV so the UI can poll
+ *
+ * Storage: ctx.storage.sql (SQLite Durable Object backend — migration v7)
+ *   TABLE workflows (id, data TEXT/JSON, session_id, status, updated_at)
  *
  * Routes:
  *   POST /workflow                — create and start a new workflow
@@ -61,34 +64,41 @@ export class WorkflowEngine {
 
   constructor(state: DurableObjectState, env: AppEnv) {
     this.state = state;
-    this.env = env;
+    this.env   = env;
+
+    // Initialize SQLite schema inside blockConcurrencyWhile so the table
+    // is guaranteed to exist before any fetch() or alarm() runs.
+    this.state.blockConcurrencyWhile(async () => {
+      this.state.storage.sql.exec(`
+        CREATE TABLE IF NOT EXISTS workflows (
+          id         TEXT PRIMARY KEY,
+          data       TEXT NOT NULL,
+          session_id TEXT NOT NULL,
+          status     TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_wf_session  ON workflows(session_id);
+        CREATE INDEX IF NOT EXISTS idx_wf_status   ON workflows(status);
+      `);
+    });
   }
 
   async fetch(request: Request): Promise<Response> {
-    const url = new URL(request.url);
+    const url   = new URL(request.url);
     const parts = url.pathname.split("/").filter(Boolean);
 
-    // POST /workflow — create
     if (request.method === "POST" && parts.length === 1 && parts[0] === "workflow") {
       return this.createWorkflow(request);
     }
-
-    // GET /workflow/:id
     if (request.method === "GET" && parts.length === 2 && parts[0] === "workflow") {
       return this.getWorkflow(parts[1]);
     }
-
-    // POST /workflow/:id/approve
     if (request.method === "POST" && parts.length === 3 && parts[2] === "approve") {
       return this.approveStep(parts[1]);
     }
-
-    // POST /workflow/:id/cancel
     if (request.method === "POST" && parts.length === 3 && parts[2] === "cancel") {
       return this.cancelWorkflow(parts[1]);
     }
-
-    // GET /workflows?sessionId=…
     if (request.method === "GET" && parts.length === 1 && parts[0] === "workflows") {
       return this.listWorkflows(url.searchParams.get("sessionId") ?? "");
     }
@@ -98,17 +108,16 @@ export class WorkflowEngine {
 
   // ── Alarm: watchdog for stalled workflows ─────────────────────────────────
   async alarm(): Promise<void> {
-    const ids = await this.state.storage.get<string[]>("index") ?? [];
-    for (const id of ids) {
-      const wf = await this.state.storage.get<Workflow>(`wf:${id}`);
-      if (!wf || (wf.status !== "running" && wf.status !== "pending")) continue;
+    const cursor = this.state.storage.sql.exec<{ data: string }>(
+      `SELECT data FROM workflows WHERE status IN ('running','pending')`
+    );
+    for (const row of cursor) {
+      const wf = JSON.parse(row.data) as Workflow;
       const staleSince = Date.now() - new Date(wf.updatedAt).getTime();
       if (staleSince > ALARM_INTERVAL) {
-        // Resume stalled step
         await this.runNextStep(wf);
       }
     }
-    // Re-arm
     await this.state.storage.setAlarm(Date.now() + ALARM_INTERVAL);
   }
 
@@ -117,10 +126,8 @@ export class WorkflowEngine {
     const { name, sessionId, steps: rawSteps } =
       await request.json() as { name: string; sessionId: string; steps: StepDef[] };
 
-    const id = crypto.randomUUID();
-    const steps: Step[] = rawSteps.map(s => ({
-      ...s, status: "pending", retries: 0,
-    }));
+    const id: string = crypto.randomUUID();
+    const steps: Step[] = rawSteps.map(s => ({ ...s, status: "pending" as StepStatus, retries: 0 }));
     const wf: Workflow = {
       id, name, sessionId, steps,
       currentStepIndex: 0,
@@ -128,54 +135,56 @@ export class WorkflowEngine {
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
-    await this.saveWorkflow(wf);
-    // Arm watchdog
+    this.sqlSaveWorkflow(wf);
     await this.state.storage.setAlarm(Date.now() + ALARM_INTERVAL);
-
-    // Kick off first step (non-blocking)
     this.runNextStep(wf).catch(() => {/* errors handled inside */});
     return Response.json({ ok: true, workflowId: id });
   }
 
   // ── Get ────────────────────────────────────────────────────────────────────
-  private async getWorkflow(id: string): Promise<Response> {
-    const wf = await this.state.storage.get<Workflow>(`wf:${id}`);
-    if (!wf) return new Response("Not found", { status: 404 });
-    return Response.json(wf);
+  private getWorkflow(id: string): Response {
+    const cursor = this.state.storage.sql.exec<{ data: string }>(
+      `SELECT data FROM workflows WHERE id = ?`, id
+    );
+    const row = [...cursor][0];
+    if (!row) return new Response("Not found", { status: 404 });
+    return Response.json(JSON.parse(row.data));
   }
 
   // ── Approve ────────────────────────────────────────────────────────────────
   private async approveStep(id: string): Promise<Response> {
-    const wf = await this.state.storage.get<Workflow>(`wf:${id}`);
+    const wf = this.loadWorkflow(id);
     if (!wf) return new Response("Not found", { status: 404 });
     const step = wf.steps[wf.currentStepIndex];
     if (!step || step.status !== "awaiting_approval")
       return new Response("No step awaiting approval", { status: 400 });
     step.status = "pending";
     wf.status   = "running";
-    await this.saveWorkflow(wf);
+    this.sqlSaveWorkflow(wf);
     this.runNextStep(wf).catch(() => {});
     return Response.json({ ok: true });
   }
 
   // ── Cancel ─────────────────────────────────────────────────────────────────
   private async cancelWorkflow(id: string): Promise<Response> {
-    const wf = await this.state.storage.get<Workflow>(`wf:${id}`);
+    const wf = this.loadWorkflow(id);
     if (!wf) return new Response("Not found", { status: 404 });
-    wf.status   = "cancelled";
+    wf.status    = "cancelled";
     wf.updatedAt = new Date().toISOString();
-    await this.saveWorkflow(wf);
+    this.sqlSaveWorkflow(wf);
     return Response.json({ ok: true });
   }
 
   // ── List ───────────────────────────────────────────────────────────────────
-  private async listWorkflows(sessionId: string): Promise<Response> {
-    const ids = await this.state.storage.get<string[]>("index") ?? [];
-    const wfs: Workflow[] = [];
-    for (const id of ids) {
-      const wf = await this.state.storage.get<Workflow>(`wf:${id}`);
-      if (wf && (!sessionId || wf.sessionId === sessionId)) wfs.push(wf);
-    }
+  private listWorkflows(sessionId: string): Response {
+    const cursor = sessionId
+      ? this.state.storage.sql.exec<{ data: string }>(
+          `SELECT data FROM workflows WHERE session_id = ? ORDER BY updated_at DESC`, sessionId
+        )
+      : this.state.storage.sql.exec<{ data: string }>(
+          `SELECT data FROM workflows ORDER BY updated_at DESC`
+        );
+    const wfs = [...cursor].map(r => JSON.parse(r.data) as Workflow);
     return Response.json(wfs);
   }
 
@@ -184,27 +193,25 @@ export class WorkflowEngine {
     while (wf.currentStepIndex < wf.steps.length) {
       const step = wf.steps[wf.currentStepIndex];
 
-      // Approval gate
       if (step.requiresApproval && step.status === "pending") {
         step.status = "awaiting_approval";
         wf.status   = "paused";
-        await this.saveWorkflow(wf);
+        this.sqlSaveWorkflow(wf);
         return;
       }
-
-      if (step.status === "done") { wf.currentStepIndex++; continue; }
-      if (step.status === "awaiting_approval") return;
+      if (step.status === "done")               { wf.currentStepIndex++; continue; }
+      if (step.status === "awaiting_approval")  return;
 
       step.status    = "running";
       step.startedAt = new Date().toISOString();
       wf.status      = "running";
-      await this.saveWorkflow(wf);
+      this.sqlSaveWorkflow(wf);
 
       try {
-        const output = await this.executeStep(step, wf);
-        step.status      = "done";
-        step.output      = output;
-        step.completedAt = new Date().toISOString();
+        const output      = await this.executeStep(step, wf);
+        step.status       = "done";
+        step.output       = output;
+        step.completedAt  = new Date().toISOString();
         wf.currentStepIndex++;
       } catch (err) {
         step.retries++;
@@ -213,30 +220,27 @@ export class WorkflowEngine {
           step.error  = String(err);
           wf.status   = "failed";
           wf.result   = `Step "${step.name}" failed after ${MAX_RETRIES} retries: ${err}`;
-          await this.saveWorkflow(wf);
+          this.sqlSaveWorkflow(wf);
           await this.updateKvStatus(wf);
           return;
         }
-        // Exponential back-off (1s, 2s, 4s)
         await new Promise(r => setTimeout(r, 1000 * Math.pow(2, step.retries - 1)));
         step.status = "pending";
       }
-      await this.saveWorkflow(wf);
+      this.sqlSaveWorkflow(wf);
       await this.updateKvStatus(wf);
     }
 
-    // All steps done
-    wf.status = "done";
-    wf.result = "Workflow completed successfully.";
+    wf.status    = "done";
+    wf.result    = "Workflow completed successfully.";
     wf.updatedAt = new Date().toISOString();
-    await this.saveWorkflow(wf);
+    this.sqlSaveWorkflow(wf);
     await this.updateKvStatus(wf);
   }
 
   private async executeStep(step: Step, wf: Workflow): Promise<string> {
     if (step.type === "approval") return "approved";
 
-    // Delegate agent steps to THINK_AGENT
     if (step.type === "agent" && this.env.THINK_AGENT) {
       const agentId = this.env.THINK_AGENT.idFromName(`${wf.sessionId}:${step.id}`);
       const stub    = this.env.THINK_AGENT.get(agentId);
@@ -249,7 +253,6 @@ export class WorkflowEngine {
       return data.answer ?? "Step completed.";
     }
 
-    // Custom / command steps — execute via AI summary
     if (step.type === "custom" || step.type === "command") {
       return `Executed step: ${step.name}`;
     }
@@ -257,15 +260,26 @@ export class WorkflowEngine {
     return "Step completed.";
   }
 
-  // ── Storage helpers ────────────────────────────────────────────────────────
-  private async saveWorkflow(wf: Workflow): Promise<void> {
+  // ── SQL helpers ────────────────────────────────────────────────────────────
+  private sqlSaveWorkflow(wf: Workflow): void {
     wf.updatedAt = new Date().toISOString();
-    await this.state.storage.put(`wf:${wf.id}`, wf);
-    const ids = await this.state.storage.get<string[]>("index") ?? [];
-    if (!ids.includes(wf.id)) {
-      ids.push(wf.id);
-      await this.state.storage.put("index", ids);
-    }
+    this.state.storage.sql.exec(
+      `INSERT OR REPLACE INTO workflows (id, data, session_id, status, updated_at)
+       VALUES (?, ?, ?, ?, ?)`,
+      wf.id,
+      JSON.stringify(wf),
+      wf.sessionId,
+      wf.status,
+      wf.updatedAt,
+    );
+  }
+
+  private loadWorkflow(id: string): Workflow | null {
+    const cursor = this.state.storage.sql.exec<{ data: string }>(
+      `SELECT data FROM workflows WHERE id = ?`, id
+    );
+    const row = [...cursor][0];
+    return row ? JSON.parse(row.data) as Workflow : null;
   }
 
   private async updateKvStatus(wf: Workflow): Promise<void> {

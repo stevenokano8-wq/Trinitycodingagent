@@ -3,6 +3,13 @@ main = "server/worker.ts"
 compatibility_date = "2026-07-11"
 compatibility_flags = ["nodejs_compat"]
 
+# ⚠️  DO EXPORT RULE — READ BEFORE EDITING ⚠️
+# Every class_name listed in [[durable_objects.bindings]] AND every class ever
+# added in [[migrations]] (new_classes / new_sqlite_classes) MUST be exported
+# from server/worker.ts at all times.  Removing an export without a matching
+# deleted_classes or renamed_classes migration causes Cloudflare error 10064
+# and blocks ALL deploys.  See server/worker.ts for the organised export block.
+
 # Serve the Vite production build as static assets; the Worker handles /api/**
 # requests first, and all other paths fall through to SPA index.html.
 [assets]

@@ -33,6 +33,15 @@ export { WebSocketManager }     from "./durable-objects/WebSocketManager.js";
 export { WorkflowEngineSql }       from "./durable-objects/WorkflowEngine.js";
 export { ThinkAgent }           from "./durable-objects/ThinkAgent.js";
 export { SubAgentOrchestratorSql } from "./durable-objects/SubAgentOrchestrator.js";
+
+// ── Legacy class-name aliases (CF error 10064 guard) ─────────────────────────
+// WorkflowEngine and SubAgentOrchestrator were registered in migration v4.
+// v7 introduced the *Sql SQLite variants under new names but did NOT delete the
+// old registrations, so Cloudflare still requires these names to be exported.
+// Aliasing them to the *Sql implementations satisfies the check without
+// destroying any existing DO instances.
+export { WorkflowEngineSql       as WorkflowEngine }       from "./durable-objects/WorkflowEngine.js";
+export { SubAgentOrchestratorSql as SubAgentOrchestrator } from "./durable-objects/SubAgentOrchestrator.js";
 export { UserProfile }          from "./durable-objects/UserProfile.js";
 export { WorkspaceRegistry }    from "./durable-objects/WorkspaceRegistry.js";
 export { AiGateway }            from "./durable-objects/AiGateway.js";

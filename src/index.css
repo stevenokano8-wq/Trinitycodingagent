@@ -1,31 +1,41 @@
-@import "tailwindcss/base";
-@import "tailwindcss/components";
-@import "tailwindcss/utilities";
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@300;400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&family=Fira+Code:wght@400;500&display=swap');
+
+@import "tailwindcss";
 
 body {
-  @apply bg-blue-500 h-screen;
+  font-family: 'Inter', 'Outfit', ui-sans-serif, system-ui, sans-serif;
+  background-color: #FEF0E4;
+  color: #171717;
+  margin: 0;
+  padding: 0;
 }
 
-#root {
-  @apply h-full w-full;
+html, body, #root {
+  height: 100%;
+  height: 100dvh;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  overscroll-behavior: none;
+  -webkit-tap-highlight-color: transparent;
 }
 
-h1, h2, h3, h4, h5, h6 {
-  @apply text-white;
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}
+.scrollbar-none {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
 }
 
-.text-large {
-  @apply text-3xl;
+.scrollbar-thin::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
 }
-
-.flex-center {
-  @apply flex justify-center items-center;
+.scrollbar-thin::-webkit-scrollbar-track {
+  background: transparent;
 }
-
-.full-height {
-  @apply h-screen;
-}
-
-.full-width {
-  @apply w-screen;
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  background: #d1d5db;
+  border-radius: 2px;
 }

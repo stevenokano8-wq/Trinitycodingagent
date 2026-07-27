@@ -1,0 +1,98 @@
+[
+  {
+    "timestamp": "2026-07-27T10:47:49.198Z",
+    "level": "warn",
+    "module": "agent",
+    "message": "[FALLBACK] Gemini failed. Auto-switched provider to Cloudflare Workers AI (Llama 3)."
+  },
+  {
+    "timestamp": "2026-07-27T10:47:52.012Z",
+    "level": "info",
+    "module": "workspace",
+    "message": "Wrote agent-workspace/package.json"
+  },
+  {
+    "timestamp": "2026-07-27T10:47:53.873Z",
+    "level": "warn",
+    "module": "agent",
+    "message": "[FALLBACK] Gemini failed. Auto-switched provider to Cloudflare Workers AI (Llama 3)."
+  },
+  {
+    "timestamp": "2026-07-27T10:47:55.032Z",
+    "level": "info",
+    "module": "workspace",
+    "message": "Wrote agent-workspace/vite.config.ts"
+  },
+  {
+    "timestamp": "2026-07-27T10:48:19.578Z",
+    "level": "warn",
+    "module": "agent",
+    "message": "[FALLBACK] Gemini failed. Auto-switched provider to Cloudflare Workers AI (Llama 3)."
+  },
+  {
+    "timestamp": "2026-07-27T10:48:21.346Z",
+    "level": "info",
+    "module": "workspace",
+    "message": "Wrote agent-workspace/index.html"
+  },
+  {
+    "timestamp": "2026-07-27T10:48:23.105Z",
+    "level": "warn",
+    "module": "agent",
+    "message": "[FALLBACK] Gemini failed. Auto-switched provider to Cloudflare Workers AI (Llama 3)."
+  },
+  {
+    "timestamp": "2026-07-27T10:48:24.509Z",
+    "level": "info",
+    "module": "workspace",
+    "message": "Wrote agent-workspace/src/main.tsx"
+  },
+  {
+    "timestamp": "2026-07-27T10:48:34.822Z",
+    "level": "warn",
+    "module": "agent",
+    "message": "[FALLBACK] Gemini failed. Auto-switched provider to Cloudflare Workers AI (Llama 3)."
+  },
+  {
+    "timestamp": "2026-07-27T10:48:35.913Z",
+    "level": "info",
+    "module": "workspace",
+    "message": "Wrote agent-workspace/src/index.css"
+  },
+  {
+    "timestamp": "2026-07-27T10:48:35.993Z",
+    "level": "warn",
+    "module": "agent",
+    "message": "[FALLBACK] Gemini rate limit / quota exceeded. Auto-switched provider to Cloudflare Workers AI (Llama 3)."
+  },
+  {
+    "timestamp": "2026-07-27T10:48:37.390Z",
+    "level": "info",
+    "module": "workspace",
+    "message": "Wrote agent-workspace/src/App.tsx"
+  },
+  {
+    "timestamp": "2026-07-27T10:54:21.218Z",
+    "level": "info",
+    "module": "workspace",
+    "message": "Wrote agent-workspace/src/main.tsx"
+  },
+  {
+    "timestamp": "2026-07-27T10:54:32.571Z",
+    "level": "info",
+    "module": "workspace",
+    "message": "Wrote agent-workspace/vite.config.ts"
+  },
+  {
+    "timestamp": "2026-07-27T10:54:51.339Z",
+    "level": "info",
+    "module": "workspace",
+    "message": "Wrote agent-workspace/src/components/App.tsx"
+  },
+  {
+    "timestamp": "2026-07-27T10:55:08.782Z",
+    "level": "info",
+    "module": "workspace",
+    "message": "Wrote agent-workspace/src/App.tsx"
+  }
+]

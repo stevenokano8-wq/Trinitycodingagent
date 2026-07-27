@@ -26,8 +26,6 @@
   "exclude": [
     "server.ts",
     "server/",
-    "src/durable",
-    "src/index.ts",
     "node_modules",
     "dist"
   ],

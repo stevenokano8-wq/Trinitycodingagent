@@ -36,6 +36,21 @@ export { BrowserRun }            from "./durable/BrowserRun.js";
 // it as a Durable Object class and bind it via wrangler.api.toml.
 export { Sandbox }               from "@cloudflare/sandbox";
 
+// Legacy Durable Object class stubs for retired bindings
+class LegacyDurableObjectStub {
+  constructor(_state: unknown, _env: unknown) {}
+  async fetch(): Promise<Response> {
+    return new Response("This Durable Object class is retired.", { status: 410 });
+  }
+}
+export class SovereignAgentSession extends LegacyDurableObjectStub {}
+export class RateLimiter extends LegacyDurableObjectStub {}
+export class SovereignSelfHealMCP extends LegacyDurableObjectStub {}
+export class SovereignProjectMCP extends LegacyDurableObjectStub {}
+export class SovereignFileToolsMCP extends LegacyDurableObjectStub {}
+export class SovereignGitToolsMCP extends LegacyDurableObjectStub {}
+export class AgentOrchestration extends LegacyDurableObjectStub {}
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 type Bindings = AppEnv;

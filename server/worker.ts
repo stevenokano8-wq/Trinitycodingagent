@@ -26,43 +26,38 @@ import * as childProcess from "child_process";
 import * as fs from "fs";
 import * as path from "path";
 
-// ═══════════════════════════════════════════════════════════════════════════════
-//  DURABLE OBJECT EXPORTS
-//
-//  RULE: Every class ever registered via a [[migrations]] entry in
-//  wrangler.api.toml MUST be exported from this file — even if the binding
-//  has been renamed or the class is no longer actively used.  Removing an
-//  export without a corresponding deleted_classes migration causes
-//  Cloudflare error 10064 and blocks all deploys.
-//
-//  DO NOT remove, rename, or move any export below without first adding the
-//  appropriate migration (renamed_classes or deleted_classes) to
-//  wrangler.api.toml.
-// ═══════════════════════════════════════════════════════════════════════════════
+// ── Durable Object exports ────────────────────────────────────────────────────
+export { SessionWorkspace }     from "./durable-objects/SessionWorkspace.js";
+export { FileExplorer }         from "./durable-objects/FileExplorer.js";
+export { WebSocketManager }     from "./durable-objects/WebSocketManager.js";
+export { WorkflowEngine }       from "./durable-objects/WorkflowEngine.js";
+export { ThinkAgent }           from "./durable-objects/ThinkAgent.js";
+export { SubAgentOrchestrator } from "./durable-objects/SubAgentOrchestrator.js";
+export { UserProfile }          from "./durable-objects/UserProfile.js";
+export { WorkspaceRegistry }    from "./durable-objects/WorkspaceRegistry.js";
+export { AiGateway }            from "./durable-objects/AiGateway.js";
+export { LivePreview }          from "./durable-objects/LivePreview.js";
+export { BrowserRun }           from "./durable-objects/BrowserRun.js";
 
-// ── v4 — original Durable Object classes ─────────────────────────────────────
-export { SessionWorkspace }  from "./durable-objects/SessionWorkspace.js";
-export { FileExplorer }      from "./durable-objects/FileExplorer.js";
-export { WebSocketManager }  from "./durable-objects/WebSocketManager.js";
-export { ThinkAgent }        from "./durable-objects/ThinkAgent.js";
-export { UserProfile }       from "./durable-objects/UserProfile.js";
-export { WorkspaceRegistry } from "./durable-objects/WorkspaceRegistry.js";
-export { AiGateway }         from "./durable-objects/AiGateway.js";
-export { LivePreview }       from "./durable-objects/LivePreview.js";
-export { BrowserRun }        from "./durable-objects/BrowserRun.js";
+// ── Cloudflare Sandbox — provides real Linux container runtime for CLI commands ──
+// The Sandbox class must be exported from the worker entry point so Wrangler
+// can register it as a Durable Object and bind it via wrangler.api.toml.
+export { Sandbox }              from "@cloudflare/sandbox";
 
-// v4 names for WorkflowEngine + SubAgentOrchestrator — kept as aliases to the
-// v7 *Sql classes.  Cloudflare retains the v4 registrations in its DO registry
-// and requires these export names to remain present (CF error 10064).
-export { WorkflowEngineSql       as WorkflowEngine }       from "./durable-objects/WorkflowEngine.js";
-export { SubAgentOrchestratorSql as SubAgentOrchestrator } from "./durable-objects/SubAgentOrchestrator.js";
-
-// ── v6 — Cloudflare Sandbox (Linux container runtime for shell / npm commands) ─
-export { Sandbox } from "@cloudflare/sandbox";
-
-// ── v7 — SQLite-backed DO variants (active bindings in wrangler.api.toml) ────
-export { WorkflowEngineSql }       from "./durable-objects/WorkflowEngine.js";
-export { SubAgentOrchestratorSql } from "./durable-objects/SubAgentOrchestrator.js";
+// Legacy Durable Object class stubs for retired bindings
+class LegacyDurableObjectStub {
+  constructor(_state: unknown, _env: unknown) {}
+  async fetch(): Promise<Response> {
+    return new Response("This Durable Object class is retired.", { status: 410 });
+  }
+}
+export class SovereignAgentSession extends LegacyDurableObjectStub {}
+export class RateLimiter extends LegacyDurableObjectStub {}
+export class SovereignSelfHealMCP extends LegacyDurableObjectStub {}
+export class SovereignProjectMCP extends LegacyDurableObjectStub {}
+export class SovereignFileToolsMCP extends LegacyDurableObjectStub {}
+export class SovereignGitToolsMCP extends LegacyDurableObjectStub {}
+export class AgentOrchestration extends LegacyDurableObjectStub {}
 
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -274,50 +269,6 @@ app.delete("/api/files", async (c) => {
 // ══════════════════════════════════════════════════════════════════════════════
 
 app.get("/api/logs",        async (c) => { const logs = getLogDrops(); return c.json({ count: logs.length, logs }); });
-
-// ── DB Status — live data for DbVisualizer component ─────────────────────────
-// Returns KV cache keys (sampled) + recent structured logs + binding health.
-app.get("/api/db/status", async (c) => {
-  await ensureInit(c.env);
-
-  // KV sample: list known prefixes and surface key/value/ttl metadata
-  const kvEntries: Array<{ key: string; val: string; ttl: string; type: string }> = [];
-  if (c.env.CACHE_KV) {
-    try {
-      const listed = await c.env.CACHE_KV.list({ prefix: "", limit: 20 } as Parameters<typeof c.env.CACHE_KV.list>[0]);
-      for (const k of (listed.keys ?? [])) {
-        const val = await c.env.CACHE_KV.get(k.name);
-        kvEntries.push({
-          key:  k.name,
-          val:  val ? (val.length > 60 ? val.slice(0, 60) + "…" : val) : "(null)",
-          ttl:  (k as { expiration?: number }).expiration
-                  ? `${Math.round(((k as { expiration?: number }).expiration! * 1000 - Date.now()) / 1000)}s`
-                  : "PERSISTENT",
-          type: val?.startsWith("{") ? "JSON" : "STRING",
-        });
-      }
-    } catch {
-      kvEntries.push({ key: "kv:error", val: "listing failed", ttl: "—", type: "ERROR" });
-    }
-  } else {
-    kvEntries.push({ key: "session_state:active_id", val: "local_fallback", ttl: "—", type: "STRING" });
-  }
-
-  // Log lines from in-process logger
-  const rawLogs = getLogDrops();
-  const logs = rawLogs.slice(-50).map(l => ({
-    ts:    l.timestamp ?? new Date().toISOString().slice(11, 19),
-    level: l.level ?? "info",
-    msg:   l.message ?? String(l),
-  }));
-
-  return c.json({
-    d1Status: dbStatus.d1,
-    kvStatus: dbStatus.kv,
-    kv:   kvEntries,
-    logs,
-  });
-});
 app.post("/api/logs/clear", async (c) => { clearLogDrops(); return c.json({ status: "cleared" }); });
 app.post("/api/cache/clear", async (c) => { await cacheFlush(); return c.json({ status: "cleared" }); });
 

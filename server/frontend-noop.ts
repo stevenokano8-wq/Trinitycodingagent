@@ -26,6 +26,17 @@ class LegacyDurableObjectStub {
   }
 }
 
+export class SessionWorkspace extends LegacyDurableObjectStub {}
+export class FileExplorer extends LegacyDurableObjectStub {}
+export class WebSocketManager extends LegacyDurableObjectStub {}
+export class WorkflowEngine extends LegacyDurableObjectStub {}
+export class ThinkAgent extends LegacyDurableObjectStub {}
+export class SubAgentOrchestrator extends LegacyDurableObjectStub {}
+export class UserProfile extends LegacyDurableObjectStub {}
+export class WorkspaceRegistry extends LegacyDurableObjectStub {}
+export class AiGateway extends LegacyDurableObjectStub {}
+export class LivePreview extends LegacyDurableObjectStub {}
+export class BrowserRun extends LegacyDurableObjectStub {}
 export class Sandbox extends LegacyDurableObjectStub {}
 export class SovereignAgentSession extends LegacyDurableObjectStub {}
 export class RateLimiter extends LegacyDurableObjectStub {}

@@ -3,27 +3,8 @@ main = "server/worker.ts"
 compatibility_date = "2026-07-11"
 compatibility_flags = ["nodejs_compat"]
 
-# ⚠️  DO EXPORT RULE — READ BEFORE EDITING ⚠️
-# Every class_name listed in [[durable_objects.bindings]] AND every class ever
-# added in [[migrations]] (new_classes / new_sqlite_classes) MUST be exported
-# from server/worker.ts at all times.  Removing an export without a matching
-# deleted_classes or renamed_classes migration causes Cloudflare error 10064
-# and blocks ALL deploys.  See server/worker.ts for the organised export block.
-
-# Serve the Vite production build as static assets; the Worker handles /api/**
-# requests first, and all other paths fall through to SPA index.html.
-[assets]
-directory = "./dist"
-binding = "ASSETS"
-not_found_handling = "single-page-application"
-run_worker_first = false
-
 [[routes]]
 pattern = "agent-api.trinityuniverse.org"
-custom_domain = true
-
-[[routes]]
-pattern = "agent.trinityuniverse.org"
 custom_domain = true
 
 # ── Persistence ───────────────────────────────────────────────────────────────
@@ -94,7 +75,7 @@ class_name = "WebSocketManager"
 
 [[durable_objects.bindings]]
 name = "WORKFLOW_ENGINE"
-class_name = "WorkflowEngineSql"
+class_name = "WorkflowEngine"
 
 [[durable_objects.bindings]]
 name = "THINK_AGENT"
@@ -102,7 +83,7 @@ class_name = "ThinkAgent"
 
 [[durable_objects.bindings]]
 name = "SUB_AGENT_ORCHESTRATOR"
-class_name = "SubAgentOrchestratorSql"
+class_name = "SubAgentOrchestrator"
 
 [[durable_objects.bindings]]
 name = "USER_PROFILE"
@@ -155,13 +136,3 @@ deleted_classes = ["Sandbox"]
 tag = "v6_add_sandbox_container"
 new_classes     = ["Sandbox"]
 deleted_classes = []
-
-# Add SQLite-backed versions under new class names.
-# The old KV-backed WorkflowEngine / SubAgentOrchestrator remain in the v4
-# migration history but no longer have active bindings — Cloudflare allows
-# orphaned class names. The bindings above now point to the *Sql variants,
-# so new DO instances use SQLite storage from this migration forward.
-[[migrations]]
-tag = "v7_sqlite_state_tracking"
-new_sqlite_classes = ["WorkflowEngineSql", "SubAgentOrchestratorSql"]
-deleted_classes    = []

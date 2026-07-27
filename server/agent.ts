@@ -73,23 +73,11 @@ export async function fetchSymbolDependencies(symbolName: string): Promise<ASTNo
 // ---------------------------------------------------------------------------
 const fileWriteLocks = new Map<string, { agentId: string; lockedAt: string }>();
 
-/** Maximum time a file lock can be held before it is auto-released (5 minutes). */
-const LOCK_TTL_MS = 5 * 60 * 1000;
-
 export function acquireFileLock(filePath: string, agentId: string): { acquired: boolean; currentOwner?: string } {
   const normalized = filePath.replace(/^\/+/, "");
   const existing = fileWriteLocks.get(normalized);
   if (existing && existing.agentId !== agentId) {
-    // Auto-release stale locks that have been held for longer than the TTL.
-    // This prevents orphaned locks from crashed/cancelled builds from blocking
-    // all subsequent subtask executions forever.
-    const lockedMs = Date.now() - new Date(existing.lockedAt).getTime();
-    if (lockedMs < LOCK_TTL_MS) {
-      return { acquired: false, currentOwner: existing.agentId };
-    }
-    // Stale lock — evict it and let this agent take over.
-    console.warn(`[FileLock] Auto-releasing stale lock on "${normalized}" held by ${existing.agentId} for ${Math.round(lockedMs / 1000)}s`);
-    fileWriteLocks.delete(normalized);
+    return { acquired: false, currentOwner: existing.agentId };
   }
   fileWriteLocks.set(normalized, { agentId, lockedAt: new Date().toISOString() });
   return { acquired: true };
@@ -182,8 +170,7 @@ let aiClient: GoogleGenAI | null = null;
 let aiClientKey: string | null = null;
 
 export function getGeminiClient(env?: Partial<AppEnv>): GoogleGenAI | null {
-  const resolved = resolveEnvWithOverrides(env);
-  const key = resolved.GEMINI_API_KEY || (typeof process !== "undefined" ? process.env?.GEMINI_API_KEY : undefined);
+  const key = resolveEnvWithOverrides(env).GEMINI_API_KEY;
   if (!key) {
     return null;
   }
@@ -195,23 +182,6 @@ export function getGeminiClient(env?: Partial<AppEnv>): GoogleGenAI | null {
     aiClientKey = key;
   }
   return aiClient;
-}
-
-export function logProviderReadiness(env?: Partial<AppEnv>): void {
-  const resolved = resolveEnvWithOverrides(env);
-  const geminiKey = resolved.GEMINI_API_KEY || (typeof process !== "undefined" ? process.env?.GEMINI_API_KEY : undefined);
-  const geminiStatus = geminiKey ? "AVAILABLE" : "MISSING";
-
-  const cfAiBound = !!(resolved.AI && typeof (resolved.AI as any).run === "function");
-  const cfToken = resolved.CLOUDFLARE_API_TOKEN || (typeof process !== "undefined" ? (process.env?.CLOUDFLARE_API_TOKEN || process.env?.CF_API_TOKEN) : undefined);
-  const cfAccount = resolved.CLOUDFLARE_ACCOUNT_ID || (typeof process !== "undefined" ? (process.env?.CLOUDFLARE_ACCOUNT_ID || process.env?.CF_ACCOUNT_ID) : undefined);
-  const cfAiStatus = (cfAiBound || (cfToken && cfAccount)) ? "AVAILABLE" : "MISSING";
-
-  const dsKey = resolved.DEEPSEEK_API_KEY || (typeof process !== "undefined" ? process.env?.DEEPSEEK_API_KEY : undefined);
-  const oaiKey = resolved.OPENAI_API_KEY || (typeof process !== "undefined" ? process.env?.OPENAI_API_KEY : undefined);
-  const dsOaiStatus = (dsKey || oaiKey) ? "AVAILABLE" : "MISSING";
-
-  console.log(`[PROVIDER CHECK] Gemini: ${geminiStatus} | CF AI: ${cfAiStatus} | DeepSeek/OpenAI: ${dsOaiStatus}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -229,20 +199,14 @@ const CF_PLAN_MODEL = '@cf/meta/llama-3.1-8b-instruct-fast';      // Planning: f
 const CF_CODE_MODEL = '@cf/meta/llama-3.3-70b-instruct-fp8-fast'; // Code gen: best quality
 const CF_FAST_MODEL = '@cf/meta/llama-3.1-8b-instruct-fast';      // Sub-200ms commandsel)
 
-let geminiQuotaExhausted = false;
-
 export function isRateLimitError(err: any): boolean {
   if (!err) return false;
-  const msg = typeof err === "string" ? err.toLowerCase() : (err.message || String(err) || JSON.stringify(err)).toLowerCase();
+  const msg = (err.message || String(err)).toLowerCase();
   const status = err.status || err.statusCode || err.code;
   return (
     status === 429 ||
     msg.includes("429") ||
-    msg.includes("quota") ||
-    msg.includes("quotafailure") ||
-    msg.includes("generate_content_free_tier_requests") ||
-    msg.includes("generaterequestsperday") ||
-    msg.includes("generaterequestsperminute") ||
+    msg.includes("quota exceeded") ||
     msg.includes("resource_exhausted") ||
     msg.includes("rate limit") ||
     msg.includes("rate_limit") ||
@@ -264,13 +228,9 @@ export async function callCloudflareWorkersAi(
     ? [{ role: "system", content: systemPrompt }, ...messages]
     : messages;
 
-  // 1. Native Workers AI binding inside Cloudflare Worker context (guarded for missing bindings or Wrangler dev mode)
+  // 1. Native Workers AI binding inside Cloudflare Worker context
   if (resolved.AI && typeof (resolved.AI as any).run === "function") {
-    try {
-      return await runCfAi(resolved.AI, formattedMessages, maxTokens, model);
-    } catch (cfErr: any) {
-      console.warn(`[WRANGLER / CF AI BINDING GUARD] Workers AI binding execution failed (${cfErr?.message || cfErr}). Falling back smoothly to REST/secondary key...`);
-    }
+    return runCfAi(resolved.AI, formattedMessages, maxTokens, model);
   }
 
   // 2. Fallback REST API call using CLOUDFLARE_API_TOKEN & CLOUDFLARE_ACCOUNT_ID
@@ -378,53 +338,41 @@ export async function generateWithFallback(
   maxTokens: number = 2048
 ): Promise<string> {
   let geminiErr: any = null;
+  try {
+    return await geminiCallFn();
+  } catch (err: any) {
+    geminiErr = err;
+    const isRateLimit = isRateLimitError(err);
+    const fallbackLog = `[FALLBACK] Gemini ${isRateLimit ? "quota exceeded" : "failed"}. Switched execution provider to Cloudflare Workers AI.`;
+    console.warn(fallbackLog, err.message);
+    appendLogDrop("warn", "agent", fallbackLog);
 
-  if (!geminiQuotaExhausted) {
-    try {
-      return await geminiCallFn();
-    } catch (err: any) {
-      geminiErr = err;
-      if (isRateLimitError(err)) {
-        geminiQuotaExhausted = true;
-      }
-      const isRateLimit = isRateLimitError(err);
-      const fallbackLog = `[FALLBACK] Gemini ${isRateLimit ? "rate limit / quota exceeded" : "failed"}. Auto-switched provider to Cloudflare Workers AI (Llama 3).`;
-      console.warn(fallbackLog, err.message);
-      appendLogDrop("warn", "agent", fallbackLog);
-
-      if (subtaskId) {
-        broadcastSSE("subtask_log", { subtaskId, log: fallbackLog });
-      }
-      broadcastSSE("agent_fallback", { message: fallbackLog, subtaskId });
-    }
-  } else {
-    const bypassLog = `[FALLBACK] Gemini rate limit active. Directing call directly to Cloudflare Workers AI (Llama 3).`;
-    console.warn(bypassLog);
     if (subtaskId) {
-      broadcastSSE("subtask_log", { subtaskId, log: bypassLog });
+      broadcastSSE("subtask_log", { subtaskId, log: fallbackLog });
     }
-  }
+    broadcastSSE("agent_fallback", { message: fallbackLog, subtaskId });
 
-  // Fallback 1: Cloudflare Workers AI (Llama 3)
-  try {
-    const cfResult = await callCloudflareWorkersAi(fallbackMessages, systemPrompt, env, model, maxTokens);
-    if (cfResult && cfResult.trim()) {
-      return cfResult;
+    // Fallback 1: Cloudflare Workers AI
+    try {
+      const cfResult = await callCloudflareWorkersAi(fallbackMessages, systemPrompt, env, model, maxTokens);
+      if (cfResult && cfResult.trim()) {
+        return cfResult;
+      }
+    } catch (cfErr: any) {
+      console.warn(`[generateWithFallback] Cloudflare Workers AI fallback failed: ${cfErr.message}`);
     }
-  } catch (cfErr: any) {
-    console.warn(`[generateWithFallback] Cloudflare Workers AI fallback failed: ${cfErr.message}`);
-  }
 
-  // Fallback 2: DeepSeek or OpenAI
-  try {
-    const dsResult = await callDeepSeekOrOpenAi(fallbackMessages, systemPrompt, env, maxTokens);
-    if (dsResult && dsResult.trim()) {
-      const dsLog = "[FALLBACK] Switched execution provider to DeepSeek / OpenAI.";
-      broadcastSSE("agent_fallback", { message: dsLog, subtaskId });
-      return dsResult;
+    // Fallback 2: DeepSeek or OpenAI
+    try {
+      const dsResult = await callDeepSeekOrOpenAi(fallbackMessages, systemPrompt, env, maxTokens);
+      if (dsResult && dsResult.trim()) {
+        const dsLog = "[FALLBACK] Switched execution provider to DeepSeek / OpenAI.";
+        broadcastSSE("agent_fallback", { message: dsLog, subtaskId });
+        return dsResult;
+      }
+    } catch (dsErr: any) {
+      console.warn(`[generateWithFallback] DeepSeek/OpenAI fallback failed: ${dsErr.message}`);
     }
-  } catch (dsErr: any) {
-    console.warn(`[generateWithFallback] DeepSeek/OpenAI fallback failed: ${dsErr.message}`);
   }
 
   const errLog = `[EXECUTION_FAILED_NO_PROVIDERS] All AI model providers (Gemini, Cloudflare Workers AI, DeepSeek/OpenAI) failed to generate a response.`;
@@ -435,174 +383,7 @@ export async function generateWithFallback(
   }
   broadcastSSE("agent_fallback", { message: errLog, subtaskId, error: true });
 
-  throw new Error(`[EXECUTION_FAILED_NO_PROVIDERS] All AI model providers failed. Initial error: ${geminiErr?.message || "Gemini rate limit exceeded"}`);
-}
-
-export function synthesizeLocalCodeTemplate(targetPath: string, subtaskName: string, prompt: string): string {
-  const ext = path.extname(targetPath).toLowerCase();
-  const filename = path.basename(targetPath, ext);
-
-  if (targetPath === "src/main.tsx" || targetPath === "src/main.js" || targetPath === "src/index.tsx") {
-    return `import React from 'react';
-import ReactDOM from 'react-dom/client';
-import App from './App';
-import './index.css';
-
-const root = ReactDOM.createRoot(
-  document.getElementById('root') as HTMLElement
-);
-root.render(
-  <React.StrictMode>
-    <App />
-  </React.StrictMode>
-);
-`;
-  }
-
-  if (targetPath === "src/index.css") {
-    return `@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@300;400;500;600;700&display=swap');
-
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
-
-body {
-  font-family: 'Inter', 'Outfit', ui-sans-serif, system-ui, sans-serif;
-  background-color: #FEF0E4;
-  color: #171717;
-  margin: 0;
-  padding: 0;
-}
-
-html, body, #root {
-  height: 100%;
-  height: 100dvh;
-  margin: 0;
-  padding: 0;
-  overflow: hidden;
-  overscroll-behavior: none;
-}
-`;
-  }
-
-  if (targetPath === "index.html") {
-    return `<!DOCTYPE html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Application</title>
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
-  </body>
-</html>
-`;
-  }
-
-  if (ext === ".json") {
-    if (filename === "package") {
-      return JSON.stringify({
-        name: "app",
-        private: true,
-        version: "1.0.0",
-        type: "module",
-        scripts: {
-          dev: "vite",
-          build: "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
-          start: "node dist/server.cjs"
-        },
-        dependencies: {
-          react: "^18.3.1",
-          "react-dom": "^18.3.1",
-          "lucide-react": "^0.344.0",
-          motion: "^11.18.2"
-        },
-        devDependencies: {
-          "@types/react": "^18.3.3",
-          "@types/react-dom": "^18.3.0",
-          "@vitejs/plugin-react": "^4.3.1",
-          autoprefixer: "^10.4.19",
-          postcss: "^8.4.38",
-          tailwindcss: "^3.4.4",
-          typescript: "^5.5.3",
-          vite: "^6.4.3"
-        }
-      }, null, 2);
-    }
-    return `{}`;
-  }
-
-  if (ext === ".tsx" || ext === ".jsx") {
-    const compName = filename.charAt(0).toUpperCase() + filename.slice(1);
-    return `import React, { useState } from "react";
-import { Sparkles, Code, CheckCircle, RefreshCw } from "lucide-react";
-
-export default function ${compName}() {
-  return (
-    <div className="w-full h-full min-h-screen bg-[#FEF0E4] text-stone-900 font-sans p-6 md:p-8 flex flex-col">
-      <header className="mb-6 pb-4 border-b border-amber-200/60 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="p-2.5 bg-amber-500/10 rounded-xl text-amber-700 border border-amber-500/20">
-            <Sparkles className="h-6 w-6" />
-          </div>
-          <div>
-            <h1 className="text-xl font-bold tracking-tight text-stone-900">${compName}</h1>
-            <p className="text-xs text-stone-500 font-medium">Synthesized feature for "${prompt.slice(0, 45)}"</p>
-          </div>
-        </div>
-        <button 
-          onClick={() => window.location.reload()}
-          className="flex items-center gap-2 px-3 py-1.5 text-xs font-semibold bg-white border border-stone-200 rounded-lg hover:bg-stone-50 transition shadow-sm"
-        >
-          <RefreshCw className="h-3.5 w-3.5 text-stone-600" />
-          Refresh View
-        </button>
-      </header>
-
-      <main className="flex-1 bg-white/80 backdrop-blur-sm rounded-2xl border border-amber-200/50 p-6 shadow-sm">
-        <div className="max-w-2xl mx-auto space-y-6">
-          <div className="p-4 rounded-xl bg-amber-50 border border-amber-200/60 text-amber-900 flex items-start gap-3">
-            <CheckCircle className="h-5 w-5 text-amber-600 flex-shrink-0 mt-0.5" />
-            <div>
-              <h3 className="font-semibold text-sm">Engine Module Active</h3>
-              <p className="text-xs text-amber-800/80 mt-1">
-                Subtask "${subtaskName}" completed. Target ${targetPath} mounted successfully.
-              </p>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="p-4 rounded-xl border border-stone-200 bg-white hover:border-amber-400/50 transition">
-              <h4 className="font-semibold text-stone-800 text-sm mb-1 flex items-center gap-2">
-                <Code className="h-4 w-4 text-amber-600" />
-                Component Path
-              </h4>
-              <p className="text-xs text-stone-500"><code className="bg-stone-100 px-1.5 py-0.5 rounded font-mono text-amber-800">{targetPath}</code></p>
-            </div>
-
-            <div className="p-4 rounded-xl border border-stone-200 bg-white hover:border-amber-400/50 transition">
-              <h4 className="font-semibold text-stone-800 text-sm mb-1 flex items-center gap-2">
-                <Sparkles className="h-4 w-4 text-amber-600" />
-                Feature Scope
-              </h4>
-              <p className="text-xs text-stone-500">${prompt}</p>
-            </div>
-          </div>
-        </div>
-      </main>
-    </div>
-  );
-}
-`;
-  }
-
-  if (ext === ".ts" || ext === ".js") {
-    return `// Synthesized logic module for ${targetPath}\nexport function initializeModule() {\n  return { status: "active", path: "${targetPath}" };\n}\nexport default initializeModule;\n`;
-  }
-
-  return `// ${targetPath} content\n`;
+  throw new Error(`[EXECUTION_FAILED_NO_PROVIDERS] All AI model providers failed. Initial error: ${geminiErr?.message || "Unknown"}`);
 }
 
 async function runCfAi(
@@ -979,7 +760,6 @@ const UI_PROMPT_REGEX = /\b(background|gradient|animation|hero|landing|page|comp
 // 1. Dynamic Task Planner — uses Cloudflare AI binding when available
 // ---------------------------------------------------------------------------
 export async function planBuildTasks(userPrompt: string, env?: Partial<AppEnv>, attachment?: any): Promise<Task[]> {
-  logProviderReadiness(env);
   // ── Instant path: no AI call for trivial folder/command prompts ────────────
   if (!attachment) {
     const instant = tryInstantPlan(userPrompt);
@@ -1023,9 +803,7 @@ CRITICAL RULES:
 4. When folder creation is requested, the task and subtask must directly represent creating that folder (e.g. "Create src/components/MyFolder folder"). Do NOT make it a multi-step theoretical checklist.
 5. Have strong professional context awareness. Avoid generic placeholder names, redundant terms, or conversational phrases.
 6. Order tasks so dependencies come FIRST. If TaskB imports from TaskA, TaskA must appear earlier.
-7. After code generation tasks, include a "Validate & install dependencies" subtask when new npm packages are needed.
-8. MODIFY vs CREATE rule (MANDATORY): When the user's prompt says "add X to existing Y", "update Y", "extend Y", "put X in Y", or "change Y" — do NOT create new folders or new files with different names. Identify the EXISTING file(s) from the workspace layout and plan subtasks that edit those exact paths. Only plan new file paths when the feature is genuinely new and has no existing home. Creating a new timestamped workspace folder for every prompt is PROHIBITED.
-9. FOLDER CREATION DISCIPLINE: Never auto-generate timestamped workspace folders (e.g. workspace-YYYYMMDD-HHMM). Only create named, purposeful directories that the code explicitly needs.${frameworkDirective}`;
+7. After code generation tasks, include a "Validate & install dependencies" subtask when new npm packages are needed.${frameworkDirective}`;
 
     const userContent = `Plan tasks for: "${userPrompt}"\nWorkspace: ${workspaceLayout}`;
 
@@ -1265,7 +1043,7 @@ async function generateSubtaskCode(
     if (ai && typeof (ai as GoogleGenAI).models?.generateContent === "function") {
       try {
         const visionResponse = await (ai as GoogleGenAI).models.generateContent({
-          model: "gemini-2.0-flash",
+          model: "gemini-1.5-flash",
           contents: [
             {
               parts: [
@@ -1364,17 +1142,10 @@ ${workspaceContext}`;
 // 2. Real-World Sequential Execution Loop
 // ---------------------------------------------------------------------------
 export async function executeAgentBuild(prompt: string, tasks: Task[], env?: Partial<AppEnv>, attachment?: any) {
-  logProviderReadiness(env);
   const startTime = Date.now();
   const modelsUsed = new Set<string>();
   const actionsTaken: any[] = [];
   activeCancellationSignal = { aborted: false, taskId: "" };
-
-  // Clear ALL file locks at the start of every build.  Locks from crashed or
-  // cancelled prior runs are never auto-released by the old code path, which
-  // causes every subsequent subtask that touches the same file to hit
-  // [LOCK CONFLICT] and silently skip code generation.
-  fileWriteLocks.clear();
 
   // Resolve CF AI binding once for this build run
   const resolved = resolveEnvWithOverrides(env);
@@ -1468,36 +1239,22 @@ export async function executeAgentBuild(prompt: string, tasks: Task[], env?: Par
                   );
                   modelsUsed.add("Flash");
                 } catch (cmdAiErr: any) {
-                  // Real fallback commands — never use echo mocks that produce zero output
                   if (sub.name.toLowerCase().includes("mkdir") || sub.name.toLowerCase().includes("folder") || sub.name.toLowerCase().includes("directory")) {
-                    const folderMatch = sub.name.match(/src\/[\w/.-]+|agent-workspace\/[\w/.-]+/);
-                    command = `mkdir -p ${folderMatch ? folderMatch[0] : "src/components"}`;
-                  } else if (sub.name.toLowerCase().includes("install") || sub.name.toLowerCase().includes("npm") || sub.name.toLowerCase().includes("dep")) {
-                    command = `npm install`;
-                  } else if (sub.name.toLowerCase().includes("build") || sub.name.toLowerCase().includes("compile")) {
-                    command = `npm run build 2>&1 || true`;
-                  } else if (sub.name.toLowerCase().includes("lint") || sub.name.toLowerCase().includes("typecheck")) {
-                    command = `npx tsc --noEmit 2>&1 || true`;
-                  } else if (sub.name.toLowerCase().includes("test")) {
-                    command = `npm test 2>&1 || true`;
+                    command = `mkdir -p src/components`;
+                  } else if (sub.name.toLowerCase().includes("install") || sub.name.toLowerCase().includes("npm")) {
+                    command = `echo "Packages handled internally"`;
                   } else {
-                    command = `echo "[done] Subtask '${sub.name.replace(/'/g, "")}' completed."`;
+                    command = `echo "Completed simulated command task"`;
                   }
                 }
               } else {
-                // Real fallback commands — no AI available, but always do meaningful work
+                // Smart fallback command determination when no AI is present
                 if (sub.name.toLowerCase().includes("mkdir") || sub.name.toLowerCase().includes("folder") || sub.name.toLowerCase().includes("directory")) {
-                  const folderMatch = sub.name.match(/src\/[\w/.-]+|agent-workspace\/[\w/.-]+/);
-                  command = `mkdir -p ${folderMatch ? folderMatch[0] : "src/components"}`;
-
-                } else if (sub.name.toLowerCase().includes("install") || sub.name.toLowerCase().includes("npm") || sub.name.toLowerCase().includes("dep")) {
-                  command = `npm install`;
-                } else if (sub.name.toLowerCase().includes("build") || sub.name.toLowerCase().includes("compile")) {
-                  command = `npm run build 2>&1 || true`;
-                } else if (sub.name.toLowerCase().includes("lint") || sub.name.toLowerCase().includes("typecheck") || sub.name.toLowerCase().includes("type-check")) {
-                  command = `npx tsc --noEmit 2>&1 || true`;
+                  command = `mkdir -p src/components`;
+                } else if (sub.name.toLowerCase().includes("install") || sub.name.toLowerCase().includes("npm")) {
+                  command = `echo "Packages handled internally"`;
                 } else {
-                  command = `echo "[done] Subtask '${sub.name.replace(/'/g, "")}' completed."`;
+                  command = `echo "Completed simulated command task"`;
                 }
               }
             }
@@ -1520,22 +1277,15 @@ export async function executeAgentBuild(prompt: string, tasks: Task[], env?: Par
                 actionsTaken.push({ type: 'create_folder', pathOrCommand: folderPath, success: true });
               };
 
-              // Build a stable workspace ID for sandbox session affinity
-              const workspaceId = `agent-${prompt.substring(0, 20).replace(/[^a-z0-9]/gi, "-").toLowerCase()}-${sub.id.split("-")[1] || "0"}`;
-
               let cmdResult;
               try {
-                cmdResult = await executeTerminalCommand(command, {
-                  timeoutMs: 60000,
-                  env: resolved,           // passes env.Sandbox (DO namespace) for CF Sandbox path
-                  workspaceId,
-                });
+                cmdResult = await executeTerminalCommand(command, { timeoutMs: 60000 });
               } catch (execErr: any) {
-                // Synchronous throws (CF Workers V8 shim) — handle non-destructively
+                // CF Workers' child_process shim throws synchronously instead of returning failure
                 if (/^mkdir\b/.test(command.trim())) {
                   await virtualMkdir(command);
                 } else {
-                  sub.logs.push(`[CMD] ⚠️ Exec bypassed (${execErr.message?.substring(0, 120)}). Continuing.`);
+                  sub.logs.push(`[CMD] ⚠️ Exec error: ${execErr.message}`);
                   actionsTaken.push({ type: 'run_command', pathOrCommand: command, success: false });
                 }
                 cmdResult = null;
@@ -1543,10 +1293,10 @@ export async function executeAgentBuild(prompt: string, tasks: Task[], env?: Par
 
               if (cmdResult) {
                 if (cmdResult.success) {
-                  sub.logs.push(`[CMD] ✅ ${cmdResult.stdout.substring(0, 300) || cmdResult.message}`);
+                  sub.logs.push(`[CMD] ✅ Command succeeded: ${cmdResult.stdout.substring(0, 300)}`);
                   actionsTaken.push({ type: 'run_command', pathOrCommand: command, success: true });
                 } else if (/^mkdir\b/.test(command.trim())) {
-                  // returned failure without throwing — virtual fallback
+                  // executeTerminalCommand returned failure (no child_process) — use virtual fallback
                   await virtualMkdir(command);
                 } else {
                   sub.logs.push(`[CMD] ⚠️ Command output: ${(cmdResult.stderr || cmdResult.stdout).substring(0, 300)}`);
@@ -1559,11 +1309,8 @@ export async function executeAgentBuild(prompt: string, tasks: Task[], env?: Par
             sub.status = "completed";
             sub.completedAt = new Date().toISOString();
           } catch (cmdErr: any) {
-            // Non-destructive: log the error but mark subtask completed so the
-            // overall task pipeline never stalls in a permanent RUNNING state.
-            sub.logs.push(`[CMD] ⚠️ Command task error (recovered): ${cmdErr.message?.substring(0, 200)}`);
-            sub.status = "completed";
-            sub.completedAt = new Date().toISOString();
+            sub.status = "failed";
+            sub.logs.push(`[CMD] Error: ${cmdErr.message}`);
           }
 
           task.progress = Math.round(((sIdx + 1) / task.subtasks.length) * 100);
@@ -1768,10 +1515,8 @@ CRITICAL PATH RULES:
                 );
                 generationError = undefined;
               } catch (retryErr: any) {
-                sub.logs.push(`[FALLBACK] All remote AI providers rate-limited or unconfigured (${retryErr.message}). Synthesizing local code engine template for ${targetPath}...`);
-                broadcastSSE("subtask_log", { subtaskId: sub.id, log: sub.logs[sub.logs.length - 1] });
-                code = synthesizeLocalCodeTemplate(targetPath, sub.name, prompt);
-                generationError = undefined;
+                releaseFileLock(targetPath, sub.id);
+                throw retryErr;
               }
             }
           }

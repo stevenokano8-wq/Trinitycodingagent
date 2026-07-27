@@ -256,18 +256,13 @@ app.post("/api/files/save", async (req, res) => {
 // API: Update settings (in-memory for this process only)
 app.post("/api/settings", async (req, res) => {
   try {
-    const { geminiApiKey, githubToken, githubRepoUrl, cloudflareAccountId, cloudflareApiToken } = req.body;
+    const { geminiApiKey } = req.body;
 
-    const updates: Record<string, string> = {};
-    if (geminiApiKey) updates.GEMINI_API_KEY = geminiApiKey;
-    if (githubToken) updates.GITHUB_TOKEN = githubToken;
-    if (githubRepoUrl) updates.GITHUB_REPO_URL = githubRepoUrl;
-    if (cloudflareAccountId) updates.CLOUDFLARE_ACCOUNT_ID = cloudflareAccountId;
-    if (cloudflareApiToken) updates.CLOUDFLARE_API_TOKEN = cloudflareApiToken;
-
-    if (Object.keys(updates).length > 0) {
-      setRuntimeOverrides(updates);
-    }
+    // Applied as in-memory overrides for this process only, matching the
+    // Workers production entry (server/worker.ts) which has no writable
+    // disk/.env either. D1/KV are bindings fixed at deploy time and cannot
+    // be reconfigured at runtime — only Gemini's key can be overridden here.
+    if (geminiApiKey) setRuntimeOverrides({ GEMINI_API_KEY: geminiApiKey });
 
     // Re-trigger DB/cache initializations
     const dStatus = await initDb();
@@ -285,20 +280,6 @@ app.post("/api/settings", async (req, res) => {
         kv: dbStatus.kv,
       }
     });
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// API: Save key/value environment variable
-app.post("/api/settings/env", async (req, res) => {
-  try {
-    const { key, value } = req.body;
-    if (!key) {
-      return res.status(400).json({ error: "key is required" });
-    }
-    setRuntimeOverrides({ [key]: value || "" });
-    res.json({ status: "success", message: `Environment variable ${key} updated successfully.` });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }

@@ -18,7 +18,6 @@ import {
   Play,
   Cpu,
   Check,
-  Key,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { Task } from "../types.js";
@@ -38,8 +37,7 @@ export type TabType =
   | "notifications"
   | "screenshots"
   | "simulation"
-  | "faceswap"
-  | "env";
+  | "faceswap";
 
 export interface PersonaObj {
   id: string;
@@ -82,7 +80,6 @@ export default function Navbar({
     { id: "github",     name: "GitHub",              icon: Github,     color: "text-neutral-800" },
     { id: "permissions",name: "Permissions",         icon: ShieldCheck,color: "text-emerald-500" },
     { id: "settings",   name: "Settings",            icon: Settings,   color: "text-gray-600" },
-    { id: "env",        name: "Env Box (API Keys)",  icon: Key,        color: "text-amber-500" },
     { id: "supabase",   name: "Supabase",            icon: Zap,        color: "text-emerald-600" },
     { id: "notifications",name:"Notifications",      icon: Bell,       color: "text-red-500" },
     { id: "screenshots",name: "Screenshots",         icon: Camera,     color: "text-indigo-500" },

@@ -31,26 +31,6 @@ export { AiGateway }             from "./durable/AiGateway.js";
 export { LivePreview }           from "./durable/LivePreview.js";
 export { BrowserRun }            from "./durable/BrowserRun.js";
 
-// ── Cloudflare Sandbox — real Linux container runtime for CLI commands ─────────
-// Must be exported from the worker entry point so Wrangler can register
-// it as a Durable Object class and bind it via wrangler.api.toml.
-export { Sandbox }               from "@cloudflare/sandbox";
-
-// Legacy Durable Object class stubs for retired bindings
-class LegacyDurableObjectStub {
-  constructor(_state: unknown, _env: unknown) {}
-  async fetch(): Promise<Response> {
-    return new Response("This Durable Object class is retired.", { status: 410 });
-  }
-}
-export class SovereignAgentSession extends LegacyDurableObjectStub {}
-export class RateLimiter extends LegacyDurableObjectStub {}
-export class SovereignSelfHealMCP extends LegacyDurableObjectStub {}
-export class SovereignProjectMCP extends LegacyDurableObjectStub {}
-export class SovereignFileToolsMCP extends LegacyDurableObjectStub {}
-export class SovereignGitToolsMCP extends LegacyDurableObjectStub {}
-export class AgentOrchestration extends LegacyDurableObjectStub {}
-
 // ─────────────────────────────────────────────────────────────────────────────
 
 type Bindings = AppEnv;
@@ -200,7 +180,7 @@ app.get("/api/health", async (c) => {
       vectorize: !!c.env.VECTORIZE,
       queue:     !!c.env.TASK_QUEUE,
       browser:   !!c.env.BROWSER,
-      sandbox:   !!(c.env.Sandbox ?? c.env.SANDBOX),
+      sandbox:   !!c.env.SANDBOX,
     },
     dbStatus,
   });

@@ -331,7 +331,6 @@ export default function SubtasksSimulationView() {
     { path: "package.json", type: "file" },
   ]);
   const [previewState, setPreviewState] = useState<"idle" | "reloading" | "live">("idle");
-  const [isSseConnected, setIsSseConnected] = useState<boolean>(false);
 
   // Standards Audit State
   const [selectedStandardId, setSelectedStandardId] = useState<number>(1);
@@ -639,54 +638,38 @@ export default function SubtasksSimulationView() {
   const activeTemplate = templates.find(t => t.id === selectedTemplateId) || templates[0];
 
   useEffect(() => {
-    let timerId: any = null;
-    let es: EventSource | null = null;
+    const sseUrl = `${API_BASE}/api/agent/stream`;
+    const es = new EventSource(sseUrl);
 
-    const connect = () => {
-      if (es) es.close();
-      const sseUrl = `${API_BASE}/api/agent/stream`;
-      es = new EventSource(sseUrl);
-
-      es.onopen = () => {
-        setIsSseConnected(true);
-        appendLog("system", "[SSE] Live backend agent stream connected (SSE PIPELINE ONLINE).");
-      };
-
-      es.onmessage = (event) => {
-        setIsSseConnected(true);
-        try {
-          const data = JSON.parse(event.data);
-          if (data.type === "subtask_log") {
-            appendLog("llama", `[SUBTASK] ${data.log || data.message || ""}`);
-          } else if (data.type === "task-update" || data.type === "tasks") {
-            appendLog("event", `[TASK] Pipeline state updated.`);
-            if (Array.isArray(data.tasks)) setSimulatedTasks(data.tasks);
-          } else if (data.type === "terminal-output") {
-            appendLog("system", `[TERMINAL] ${data.line || data.output || ""}`);
-          } else if (data.type === "workspace-compiled") {
-            appendLog("success", `[BUILD] Workspace compiled live! Hot reload triggered.`);
-            setPreviewState("live");
-          } else if (data.type === "agent_fallback") {
-            appendLog("warning", `[PROVIDER] ${data.message || ""}`);
-          }
-        } catch (_) {}
-      };
-
-      es.onerror = () => {
-        setIsSseConnected(false);
-        appendLog("warning", "[SSE] Connection dropped (SSE PIPELINE OFFLINE). Reconnecting in 3s...");
-        if (es) es.close();
-        if (timerId) clearTimeout(timerId);
-        timerId = setTimeout(connect, 3000);
-      };
+    es.onopen = () => {
+      appendLog("system", "[SSE] Live backend agent stream connected.");
     };
 
-    connect();
-
-    return () => {
-      if (timerId) clearTimeout(timerId);
-      if (es) es.close();
+    es.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        const logType = data.error ? "warning" : "system";
+        if (data.type === "subtask_log") {
+          appendLog("llama", `[SUBTASK] ${data.log || data.message || ""}`);
+        } else if (data.type === "task-update" || data.type === "tasks") {
+          appendLog("event", `[TASK] Pipeline state updated.`);
+          if (Array.isArray(data.tasks)) setSimulatedTasks(data.tasks);
+        } else if (data.type === "terminal-output") {
+          appendLog("system", `[TERMINAL] ${data.line || data.output || ""}`);
+        } else if (data.type === "workspace-compiled") {
+          appendLog("success", `[BUILD] Workspace compiled live! Hot reload triggered.`);
+          setPreviewState("live");
+        } else if (data.type === "agent_fallback") {
+          appendLog("warning", `[PROVIDER] ${data.message || ""}`);
+        }
+      } catch (_) {}
     };
+
+    es.onerror = () => {
+      es.close();
+    };
+
+    return () => es.close();
   }, []);
 
   const appendLog = (type: LogMessage["type"], text: string) => {
@@ -1021,12 +1004,7 @@ export default function SubtasksSimulationView() {
                     <Terminal className="h-4 w-4 text-indigo-500 animate-pulse" />
                     <span className="text-xs font-bold text-gray-700 font-mono">Server Event Stream</span>
                   </div>
-                  <span className={`text-[9px] font-mono px-2 py-0.5 rounded-md font-bold uppercase transition-all flex items-center gap-1.5 ${
-                    isSseConnected ? "text-emerald-700 bg-emerald-50 border border-emerald-200" : "text-rose-700 bg-rose-50 border border-rose-200 animate-pulse"
-                  }`}>
-                    <span className={`h-1.5 w-1.5 rounded-full ${isSseConnected ? "bg-emerald-500 animate-ping" : "bg-rose-500"}`} />
-                    SSE PIPELINE {isSseConnected ? "ONLINE" : "OFFLINE"}
-                  </span>
+                  <span className="text-[9px] font-mono text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-md font-bold uppercase">Phase 1 Pipeline</span>
                 </div>
                 <EventStreamConsole logs={eventLogs} />
               </div>

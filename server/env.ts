@@ -148,10 +148,7 @@ export interface AppEnv {
   TASK_QUEUE?: Queue<QueueMessage>;
 
   // ── Code execution (Cloudflare Sandbox / Containers) ───────────────────────
-  // SANDBOX (all-caps) kept for backwards compat with old container binding style
   SANDBOX?: ContainerStub;
-  // Sandbox (Pascal-case) is the DO namespace used by @cloudflare/sandbox getSandbox()
-  Sandbox?: DurableObjectNamespace;
 
   // ── Browser rendering (Cloudflare Browser Rendering) ──────────────────────
   BROWSER?: BrowserBinding;
@@ -171,12 +168,8 @@ export interface AppEnv {
 
   // ── Secrets / env vars ─────────────────────────────────────────────────────
   GEMINI_API_KEY?: string;
-  DEEPSEEK_API_KEY?: string;
-  OPENAI_API_KEY?: string;
   GITHUB_TOKEN?: string;
   GITHUB_REPO_URL?: string;
-  CLOUDFLARE_ACCOUNT_ID?: string;
-  CLOUDFLARE_API_TOKEN?: string;
 
   // ── Upstash Redis REST (fetch-based; works in Node + CF Workers) ───────────
   // Used as the cache tier between Cloudflare KV (production binding) and the
@@ -195,32 +188,18 @@ export interface QueueMessage {
 }
 
 // ── Runtime env overrides (for local dev / test injection) ────────────────────
-let _runtimeOverrides: Record<string, any> = {};
-export function setRuntimeOverrides(overrides: Record<string, any>) {
-  _runtimeOverrides = { ..._runtimeOverrides, ...overrides };
+let _runtimeOverrides: Partial<AppEnv> = {};
+export function setRuntimeOverrides(overrides: Partial<AppEnv>) {
+  _runtimeOverrides = overrides;
 }
 export function resolveEnvWithOverrides(env?: Partial<AppEnv>): Partial<AppEnv> {
-  const nodeEnv: Record<string, any> = {};
+  const nodeEnv: Partial<AppEnv> = {};
   if (typeof process !== "undefined" && process.env) {
     if (process.env.GEMINI_API_KEY) nodeEnv.GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-    if (process.env.DEEPSEEK_API_KEY) nodeEnv.DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY;
-    if (process.env.OPENAI_API_KEY) nodeEnv.OPENAI_API_KEY = process.env.OPENAI_API_KEY;
     if (process.env.GITHUB_TOKEN) nodeEnv.GITHUB_TOKEN = process.env.GITHUB_TOKEN;
     if (process.env.GITHUB_REPO_URL) nodeEnv.GITHUB_REPO_URL = process.env.GITHUB_REPO_URL;
-    if (process.env.CLOUDFLARE_ACCOUNT_ID || process.env.CF_ACCOUNT_ID) nodeEnv.CLOUDFLARE_ACCOUNT_ID = process.env.CLOUDFLARE_ACCOUNT_ID || process.env.CF_ACCOUNT_ID;
-    if (process.env.CLOUDFLARE_API_TOKEN || process.env.CF_API_TOKEN) nodeEnv.CLOUDFLARE_API_TOKEN = process.env.CLOUDFLARE_API_TOKEN || process.env.CF_API_TOKEN;
     if (process.env.UPSTASH_REDIS_REST_URL) nodeEnv.UPSTASH_REDIS_REST_URL = process.env.UPSTASH_REDIS_REST_URL;
     if (process.env.UPSTASH_REDIS_REST_TOKEN) nodeEnv.UPSTASH_REDIS_REST_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN;
   }
-  const merged = { ...nodeEnv, ...env, ..._runtimeOverrides };
-  
-  // Guarantee fallback to nodeEnv/process.env if CF Worker binding is empty or missing
-  if (!merged.GEMINI_API_KEY && nodeEnv.GEMINI_API_KEY) merged.GEMINI_API_KEY = nodeEnv.GEMINI_API_KEY;
-  if (!merged.DEEPSEEK_API_KEY && nodeEnv.DEEPSEEK_API_KEY) merged.DEEPSEEK_API_KEY = nodeEnv.DEEPSEEK_API_KEY;
-  if (!merged.OPENAI_API_KEY && nodeEnv.OPENAI_API_KEY) merged.OPENAI_API_KEY = nodeEnv.OPENAI_API_KEY;
-  if (!merged.CLOUDFLARE_API_TOKEN && nodeEnv.CLOUDFLARE_API_TOKEN) merged.CLOUDFLARE_API_TOKEN = nodeEnv.CLOUDFLARE_API_TOKEN;
-  if (!merged.CLOUDFLARE_ACCOUNT_ID && nodeEnv.CLOUDFLARE_ACCOUNT_ID) merged.CLOUDFLARE_ACCOUNT_ID = nodeEnv.CLOUDFLARE_ACCOUNT_ID;
-  if (!merged.GITHUB_TOKEN && nodeEnv.GITHUB_TOKEN) merged.GITHUB_TOKEN = nodeEnv.GITHUB_TOKEN;
-
-  return merged;
+  return { ...nodeEnv, ...env, ..._runtimeOverrides };
 }

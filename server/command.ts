@@ -126,12 +126,8 @@ async function getChildProcess(): Promise<any> {
     return childProcessModule;
   }
   try {
+    // Dynamic import to prevent bundler errors on Cloudflare Workers / non-Node environments
     childProcessModule = await import("child_process");
-    // Verify exec is actually callable (CF Workers shims import but throws on call)
-    if (!childProcessModule || typeof childProcessModule.exec !== "function") {
-      childProcessModule = false;
-      return false;
-    }
     return childProcessModule;
   } catch {
     childProcessModule = false;
@@ -153,28 +149,40 @@ async function getPathModule(): Promise<any> {
 }
 
 /**
- * Executes a terminal command via three-path routing:
- *
- *  Path A — Cloudflare Sandbox DO (preferred in production CF Workers)
- *            Activated when env.Sandbox is bound.
- *
- *  Path B — Node.js child_process.exec (local dev / Node environments).
- *            Used when child_process.exec is callable.
- *
- *  Path C — Non-blocking bypass (V8 isolate without Sandbox binding).
- *            Returns success:true so subtask loops never stall.
+ * Executes a terminal command securely and isomorphically.
+ * Streams stdout/stderr via callback if provided.
  */
 export async function executeTerminalCommand(
   command: string,
-  options?: {
-    timeoutMs?: number;
-    cwd?: string;
-    env?: any;
-    workspaceId?: string;
-    onStream?: (data: { stdout?: string; stderr?: string }) => void;
+  options?: { 
+    timeoutMs?: number; 
+    cwd?: string; 
+    onStream?: (data: { stdout?: string; stderr?: string }) => void 
   }
 ): Promise<CommandResult> {
-  // ── Security gate (runs on all paths) ─────────────────────────────────────
+  const cp = await getChildProcess();
+  if (!cp) {
+    return {
+      success: false,
+      exitCode: null,
+      stdout: "",
+      stderr: "",
+      message: "Terminal command execution is not supported in Cloudflare Workers environments."
+    };
+  }
+
+  const path = await getPathModule();
+  if (!path) {
+    return {
+      success: false,
+      exitCode: null,
+      stdout: "",
+      stderr: "",
+      message: "Path resolution module is not available in this environment."
+    };
+  }
+
+  // 1. Security validation: banned commands & egress check
   const safetyCheck = isCommandSafe(command);
   if (!safetyCheck.safe) {
     return {
@@ -186,128 +194,81 @@ export async function executeTerminalCommand(
     };
   }
 
-  const timeoutMs = options?.timeoutMs || 30000;
-
-  // ── PATH A: Cloudflare Sandbox DO ─────────────────────────────────────────
-  const sandboxNs = options?.env?.Sandbox ?? options?.env?.SANDBOX ?? null;
-  if (sandboxNs) {
-    try {
-      // Lazy-import so the module never errors in envs that don't have it
-      const { getSandbox } = await import("@cloudflare/sandbox");
-      const workspaceId = options?.workspaceId || "agent-workspace-session";
-      const sandbox = getSandbox(sandboxNs, workspaceId);
-
-      const execResult = await sandbox.exec(command, {
-        cwd: options?.cwd || "/workspace",
-        timeout: timeoutMs,
-      });
-
-      if (options?.onStream) {
-        options.onStream({ stdout: execResult.stdout, stderr: execResult.stderr });
-      }
-
-      return {
-        success: execResult.exitCode === 0,
-        exitCode: execResult.exitCode,
-        stdout: execResult.stdout || "",
-        stderr: execResult.stderr || "",
-        message: execResult.exitCode === 0
-          ? "Executed inside Cloudflare Sandbox container."
-          : `Process exited with code ${execResult.exitCode}`,
-      };
-    } catch (err: any) {
-      // Sandbox import or exec failed — fall through to Path B/C
-      console.warn("[CMD] Sandbox exec failed, falling through to local exec:", err.message);
-    }
-  }
-
-  // ── PATH B: Node.js child_process (local dev) ─────────────────────────────
-  const cp = await getChildProcess();
-  if (!cp || typeof cp.exec !== "function") {
-    // ── PATH C: Non-blocking bypass ─────────────────────────────────────────
-    // V8 isolate without Sandbox binding — return success so subtask loops
-    // continue without stalling on a platform that cannot spawn processes.
+  // 2. Security validation: path locking
+  const defaultCwd = typeof process !== "undefined" ? process.cwd() : "/";
+  const targetCwd = path.resolve(options?.cwd || defaultCwd);
+  if (!targetCwd.startsWith(defaultCwd)) {
     return {
-      success: true,
-      exitCode: 0,
-      stdout: `[VIRTUAL EXEC] CF Workers V8 isolate detected — Sandbox binding not active. Command noted: ${command}`,
+      success: false,
+      exitCode: null,
+      stdout: "",
       stderr: "",
-      message: "CLI execution bypassed safely in V8 isolate environment."
+      message: `Security validation failure: Execution directory '${targetCwd}' is outside of the project root '${defaultCwd}'.`
     };
   }
 
-  const path = await getPathModule();
-
-  // Path-locking guard (only meaningful in Node where cwd matters)
-  if (path) {
-    const defaultCwd = typeof process !== "undefined" ? process.cwd() : "/";
-    const targetCwd = path.resolve(options?.cwd || defaultCwd);
-    if (!targetCwd.startsWith(defaultCwd)) {
-      return {
-        success: false,
-        exitCode: null,
-        stdout: "",
-        stderr: "",
-        message: `Security validation failure: Execution directory '${targetCwd}' is outside the project root '${defaultCwd}'.`
-      };
-    }
-  }
-
-  const defaultCwd = typeof process !== "undefined" ? process.cwd() : "/";
-  const targetCwd = path ? path.resolve(options?.cwd || defaultCwd) : (options?.cwd || defaultCwd);
+  const timeoutMs = options?.timeoutMs || 30000;
 
   return new Promise<CommandResult>((resolve) => {
     let resolved = false;
 
-    let child: any;
-    try {
-      child = cp.exec(
-        command,
-        {
-          cwd: targetCwd,
-          timeout: timeoutMs,
-          maxBuffer: 10 * 1024 * 1024, // 10 MB
-        },
-        (error: any, stdout: string, stderr: string) => {
-          if (resolved) return;
-          resolved = true;
+    const child = cp.exec(
+      command,
+      {
+        cwd: targetCwd,
+        timeout: timeoutMs,
+        maxBuffer: 10 * 1024 * 1024, // 10MB output buffer
+      },
+      (error: any, stdout: string, stderr: string) => {
+        if (resolved) return;
+        resolved = true;
 
-          const exitCode = error ? (error.code ?? 1) : 0;
-          const success = exitCode === 0;
-          let message = success ? "Command executed successfully" : `Command failed with exit code ${exitCode}`;
-          if (error?.killed) message = `Command timed out after ${timeoutMs}ms`;
+        const exitCode = error ? (error.code ?? 1) : 0;
+        const success = exitCode === 0;
+        let message = success ? "Command executed successfully" : `Command failed with exit code ${exitCode}`;
 
-          resolve({ success, exitCode, stdout: stdout || "", stderr: stderr || "", message });
+        if (error && error.killed) {
+          message = `Command execution timed out after ${timeoutMs}ms`;
         }
-      );
-    } catch (spawnErr: any) {
-      // child_process.exec itself threw (shimmed environment) — bypass safely
-      resolve({
-        success: true,
-        exitCode: 0,
-        stdout: `[VIRTUAL EXEC] exec() threw during spawn: ${spawnErr.message}. Command noted: ${command}`,
-        stderr: "",
-        message: "CLI execution bypassed safely."
-      });
-      return;
+
+        resolve({
+          success,
+          exitCode,
+          stdout: stdout || "",
+          stderr: stderr || "",
+          message
+        });
+      }
+    );
+
+    if (options?.onStream) {
+      if (child.stdout) {
+        child.stdout.on("data", (chunk: any) => {
+          options.onStream?.({ stdout: String(chunk) });
+        });
+      }
+      if (child.stderr) {
+        child.stderr.on("data", (chunk: any) => {
+          options.onStream?.({ stderr: String(chunk) });
+        });
+      }
     }
 
-    if (options?.onStream && child) {
-      child.stdout?.on("data", (chunk: any) => options.onStream?.({ stdout: String(chunk) }));
-      child.stderr?.on("data", (chunk: any) => options.onStream?.({ stderr: String(chunk) }));
-    }
-
-    // Hard safety timeout
+    // Hard fallback backup timeout to ensure process is reaped
     setTimeout(() => {
       if (resolved) return;
       resolved = true;
-      try { child?.kill("SIGKILL"); } catch { /* ignore */ }
+      try {
+        child.kill("SIGKILL");
+      } catch {
+        // Ignore kill errors
+      }
       resolve({
         success: false,
         exitCode: null,
         stdout: "",
         stderr: "",
-        message: `Command exceeded safety timeout of ${timeoutMs}ms`
+        message: `Command execution exceeded safety fallback timeout threshold of ${timeoutMs}ms`
       });
     }, timeoutMs + 2000);
   });

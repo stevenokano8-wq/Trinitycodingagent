@@ -46,7 +46,7 @@ interface OrchestratorRun {
 
 const DEFAULT_MAX_SUBTASKS = 5;
 
-export class SubAgentOrchestrator {
+export class SubAgentOrchestratorSql {
   private state: DurableObjectState;
   private env: AppEnv;
 

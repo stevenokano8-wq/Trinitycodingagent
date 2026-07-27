@@ -58,7 +58,7 @@ interface Workflow {
 const MAX_RETRIES    = 3;
 const ALARM_INTERVAL = 10 * 60 * 1000; // 10 min watchdog
 
-export class WorkflowEngine {
+export class WorkflowEngineSql {
   private state: DurableObjectState;
   private env: AppEnv;
 

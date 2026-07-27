@@ -87,7 +87,7 @@ class_name = "WebSocketManager"
 
 [[durable_objects.bindings]]
 name = "WORKFLOW_ENGINE"
-class_name = "WorkflowEngine"
+class_name = "WorkflowEngineSql"
 
 [[durable_objects.bindings]]
 name = "THINK_AGENT"
@@ -95,7 +95,7 @@ class_name = "ThinkAgent"
 
 [[durable_objects.bindings]]
 name = "SUB_AGENT_ORCHESTRATOR"
-class_name = "SubAgentOrchestrator"
+class_name = "SubAgentOrchestratorSql"
 
 [[durable_objects.bindings]]
 name = "USER_PROFILE"
@@ -149,17 +149,12 @@ tag = "v6_add_sandbox_container"
 new_classes     = ["Sandbox"]
 deleted_classes = []
 
-# Step 1: delete the old KV-backed class instances so they can be re-created
-# as SQLite classes. Existing KV state is not carried over (intentional reset).
+# Add SQLite-backed versions under new class names.
+# The old KV-backed WorkflowEngine / SubAgentOrchestrator remain in the v4
+# migration history but no longer have active bindings — Cloudflare allows
+# orphaned class names. The bindings above now point to the *Sql variants,
+# so new DO instances use SQLite storage from this migration forward.
 [[migrations]]
-tag = "v7_delete_kv_state_tracking"
-new_classes     = []
-deleted_classes = ["WorkflowEngine", "SubAgentOrchestrator"]
-
-# Step 2: re-create the same classes under the SQLite backend.
-# new_sqlite_classes requires the class to NOT already exist in a prior
-# new_classes migration — v7 above clears that dependency.
-[[migrations]]
-tag = "v8_sqlite_state_tracking"
-new_sqlite_classes = ["WorkflowEngine", "SubAgentOrchestrator"]
+tag = "v7_sqlite_state_tracking"
+new_sqlite_classes = ["WorkflowEngineSql", "SubAgentOrchestratorSql"]
 deleted_classes    = []

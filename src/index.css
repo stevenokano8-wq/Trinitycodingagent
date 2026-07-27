@@ -5,3 +5,27 @@
 body {
   @apply bg-blue-500 h-screen;
 }
+
+#root {
+  @apply h-full w-full;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  @apply text-white;
+}
+
+.text-large {
+  @apply text-3xl;
+}
+
+.flex-center {
+  @apply flex justify-center items-center;
+}
+
+.full-height {
+  @apply h-screen;
+}
+
+.full-width {
+  @apply w-screen;
+}

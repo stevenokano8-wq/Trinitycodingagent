@@ -149,9 +149,17 @@ tag = "v6_add_sandbox_container"
 new_classes     = ["Sandbox"]
 deleted_classes = []
 
-# Upgrade state-tracking DOs to SQLite backend for structured SQL queries.
-# New instances created after this tag use ctx.storage.sql instead of KV.
+# Step 1: delete the old KV-backed class instances so they can be re-created
+# as SQLite classes. Existing KV state is not carried over (intentional reset).
 [[migrations]]
-tag = "v7_sqlite_state_tracking"
+tag = "v7_delete_kv_state_tracking"
+new_classes     = []
+deleted_classes = ["WorkflowEngine", "SubAgentOrchestrator"]
+
+# Step 2: re-create the same classes under the SQLite backend.
+# new_sqlite_classes requires the class to NOT already exist in a prior
+# new_classes migration — v7 above clears that dependency.
+[[migrations]]
+tag = "v8_sqlite_state_tracking"
 new_sqlite_classes = ["WorkflowEngine", "SubAgentOrchestrator"]
 deleted_classes    = []

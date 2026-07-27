@@ -52,6 +52,8 @@ class LegacyDurableObjectStub {
   }
 }
 export class SovereignAgentSession extends LegacyDurableObjectStub {}
+export class ProjectTools extends LegacyDurableObjectStub {}
+export class AgentSession extends LegacyDurableObjectStub {}
 export class RateLimiter extends LegacyDurableObjectStub {}
 export class SovereignSelfHealMCP extends LegacyDurableObjectStub {}
 export class SovereignProjectMCP extends LegacyDurableObjectStub {}

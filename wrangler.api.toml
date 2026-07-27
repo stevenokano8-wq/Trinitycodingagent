@@ -1,6 +1,5 @@
 name = "sovereign-agent-api"
 main = "server/worker.ts"
-tsconfig = "server/tsconfig.json"
 compatibility_date = "2026-07-11"
 compatibility_flags = ["nodejs_compat"]
 
@@ -112,12 +111,12 @@ class_name = "BrowserRun"
 [[migrations]]
 tag = "v2_delete_project_tools"
 new_classes     = []
-deleted_classes = ["ProjectTools"]
+deleted_classes = []
 
 [[migrations]]
 tag = "v3_delete_legacy_durable_objects"
 new_classes     = []
-deleted_classes = ["ProjectTools", "AgentSession"]
+deleted_classes = []
 
 [[migrations]]
 tag = "v4_add_autonomous_agent_durable_objects"
